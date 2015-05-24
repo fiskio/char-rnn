@@ -59,10 +59,11 @@ cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
             -- note: test_frac will be computed as (1 - train_frac - val_frac)
 -- bookkeeping
 cmd:option('-seed',123,'torch manual random number generator seed')
-cmd:option('-print_every',1,'how many steps/minibatches between printing out the loss')
+cmd:option('-print_every',10,'how many steps/minibatches between printing out the loss')
 cmd:option('-eval_val_every',1000,'every how many iterations should we evaluate on validation data?')
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
+cmd:option('-plot', false, 'plot training and validation bits per charater')
 -- GPU/CPU
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
 cmd:text()
@@ -151,7 +152,7 @@ function eval_split(split_index, max_batches)
         end
         -- carry over lstm state
         rnn_state[0] = rnn_state[#rnn_state]
-        print(i .. '/' .. n .. '...')
+        xlua.progress(i, n)
     end
 
     loss = loss / opt.seq_length / n
@@ -238,55 +239,83 @@ local optim_states = {
 }
 train_bpcs = {} -- bits per character
 val_bpcs = {}
+-- setup optimisation algo
 local optim_state = optim_states[opt.optim] or error('Unrecognised optim algorithm:'..opt.optim)
 local optim_algo = optim[opt.optim]
 print(opt.optim, optim_state)
 local iterations = opt.max_epochs * loader.ntrain
 local iterations_per_epoch = loader.ntrain
 local loss0 = nil
-for i = 1, iterations do
-    local epoch = i / loader.ntrain
+local bmt
+-- setup logger
+local train_logger = optim.Logger('train.log')
+local valid_logger = optim.Logger('valid.log')
+train_logger:setNames{'train_bpc'}
+valid_logger:setNames{'train_bpc', 'val_bpc'}
+train_logger:style{'-'}
+valid_logger:style{'-', '-'}
 
-    local timer = torch.Timer()
-    local _, loss = optim_algo(feval, params, optim_state)
-    local time = timer:time().real
+local gtimer = torch.Timer()
+local etimer = torch.Timer()
+local btimer = torch.Timer()
+local vtimer = torch.Timer()
 
-    local train_bpc = math.log(math.exp(loss[1]),2) -- exp to get probability, then log 2 it to get bits per character
-    train_bpcs[i] = train_bpc
+for e = 1, opt.max_epochs do
+   etimer:reset()
+   for b = 1, loader.ntrain do
+      local i = ((e-1) * loader.ntrain) + b
+      local epoch = i / loader.ntrain
 
-    -- every now and then or on last iteration
-    if i % opt.eval_val_every == 0 or i == iterations then
-        -- evaluate bpc on validation data
-        local val_loss = eval_split(2) -- 2 = validation
-        val_bpc = math.log(math.exp(val_loss),2)
-        val_bpcs[i] = val_bpc
+      btimer:reset()
+      local _, loss = optim_algo(feval, params, optim_state)
+      local time = btimer:time().real
+      bmt = bmt and 0.99 * bmt + 0.01 * time or time
 
-        local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_bpc)
-        print('saving checkpoint to ' .. savefile)
-        local checkpoint = {}
-        checkpoint.protos = protos
-        checkpoint.opt = opt
-        checkpoint.train_bpcs = train_bpcs
-        checkpoint.val_bpc = val_bpc
-        checkpoint.val_bpc = val_bpc
-        checkpoint.i = i
-        checkpoint.epoch = epoch
-        checkpoint.vocab = loader.vocab_mapping
-        torch.save(savefile, checkpoint)
-    end
+      local train_bpc = math.log(math.exp(loss[1]),2) -- exp to get probability, then log 2 it to get bits per character
+      train_bpcs[i] = train_bpc
 
-    if i % opt.print_every == 0 then
-        print(string.format("%d/%d (epoch %.3f), train_bpc = %6.8f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_bpc, grad_params:norm() / params:norm(), time))
-    end
+      -- every now and then or on last iteration
+      if i % opt.eval_val_every == 0 or i == iterations then
+         -- evaluate bpc on validation data
+         vtimer:reset()
+         local val_loss = eval_split(2) -- 2 = validation
+         print(string.format('Validation took: %s', os.date("!%X", vtimer:time().real)))
+         val_bpc = math.log(math.exp(val_loss),2)
+         val_bpcs[i] = val_bpc
+         valid_logger:add{ train_bpc, val_bpc }
+         if opt.plot then valid_logger:plot() end
+         local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_bpc)
+         print('saving checkpoint to ' .. savefile)
+         local checkpoint = {}
+         checkpoint.protos = protos
+         checkpoint.opt = opt
+         checkpoint.train_bpcs = train_bpcs
+         checkpoint.val_bpc = val_bpc
+         checkpoint.val_bpc = val_bpc
+         checkpoint.i = i
+         checkpoint.epoch = epoch
+         checkpoint.vocab = loader.vocab_mapping
+         torch.save(savefile, checkpoint)
+      end
 
-    if i % 10 == 0 then collectgarbage() end
+      if i % opt.print_every == 0 then
+         local progress_perc = 100 * i / iterations
+         local eta = os.date("!%X", bmt * (iterations - i))
+         local norms_ratio = grad_params:norm() / params:norm()
+         train_logger:add{ train_bpc }
+         if opt.plot then train_logger:plot() end
+         print(string.format("%.1f%% %d/%d (epoch %.3f), train_bpc = %6.8f, grad/param norm = %6.4e, time/batch = %.2fs, eta = %s", progress_perc, i, iterations, epoch, train_bpc, norms_ratio, time, eta))
+      end
 
-    -- handle early stopping if things are going really bad
-    if loss0 == nil then loss0 = loss[1] end
-    if loss[1] > loss0 * 3 then
-        print('loss is exploding, aborting.')
-        break -- halt
-    end
+      if i % 10 == 0 then collectgarbage() end
+
+      -- handle early stopping if things are going really bad
+      if loss0 == nil then loss0 = loss[1] end
+      if loss[1] > loss0 * 3 then
+         print('loss is exploding, aborting.')
+         break -- halt
+      end
+   end
+   print(string.format('Epoch %d took: %s', e, os.date("!%X", etimer:time().real)))
 end
-
-
+print(string.format('Training took: %s', os.date("!%X", gtimer:time().real)))
