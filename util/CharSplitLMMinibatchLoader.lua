@@ -29,14 +29,14 @@ function CharSplitLMMinibatchLoader.create(data_dir, batch_size, seq_length, spl
     local len = data:size(1)
     if len % (batch_size * seq_length) ~= 0 then
         print('cutting off end of data so that the batches/sequences divide evenly')
-        data = data:sub(1, batch_size * seq_length 
+        data = data:sub(1, batch_size * seq_length
                     * math.floor(len / (batch_size * seq_length)))
     end
 
     -- count vocab
     self.vocab_size = 0
-    for _ in pairs(self.vocab_mapping) do 
-        self.vocab_size = self.vocab_size + 1 
+    for _ in pairs(self.vocab_mapping) do
+        self.vocab_size = self.vocab_size + 1
     end
 
     -- self.batches is a table of tensors
