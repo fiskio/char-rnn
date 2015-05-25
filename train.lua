@@ -265,9 +265,10 @@ local iterations_per_epoch = loader.ntrain
 local loss0 = nil
 local bmt
 -- setup logger
-local log_dir = 'log/'..opt.data_dir:split('/')[2]..'/'
-local train_logger = optim.Logger(log_dir..opt.optim..'.train.log')
-local valid_logger = optim.Logger(log_dir..opt.optim..'.valid.log')
+local log_dir = 'log/'..paths.basename(opt.data_dir)..'/'
+local log_pfx = opt.model..'-'..opt.rnn_size..'x'..opt.num_layers..'.'..opt.optim
+local train_logger = optim.Logger(log_dir..log_pfx..'.train.log')
+local valid_logger = optim.Logger(log_dir..log_pfx..'.valid.log')
 train_logger:setNames{'train_bpc'}
 valid_logger:setNames{'train_bpc', 'val_bpc'}
 train_logger:style{'-'}
