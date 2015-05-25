@@ -65,7 +65,7 @@ cmd:option('-seed',123,'torch manual random number generator seed')
 cmd:option('-print_every',10,'how many steps/minibatches between printing out the loss')
 cmd:option('-eval_val_every',1000,'every how many iterations should we evaluate on validation data?')
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
-cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
+cmd:option('-savefile', '','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
 cmd:option('-plot', false, 'plot training and validation bits per charater')
 -- GPU/CPU
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
@@ -89,7 +89,8 @@ local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, o
 local vocab_size = loader.vocab_size  -- the number of distinct characters
 print('vocab size: ' .. vocab_size)
 -- make sure output directory exists
-if not path.exists(opt.checkpoint_dir) then lfs.mkdir(opt.checkpoint_dir) end
+local checkpoint_dir = paths.concat(opt.checkpoint_dir, paths.basename(opt.data_dir))
+if not path.exists(checkpoint_dir) then lfs.mkdir(checkpoint_dir) end
 
 -- define the model: prototypes for one timestep, then clone them in time
 protos = {}
@@ -305,18 +306,26 @@ for e = 1, opt.max_epochs do
          val_bpcs[i] = val_bpc
          valid_logger:add{ train_bpc, val_bpc }
          if opt.plot then valid_logger:plot() end
-         local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_bpc)
-         print('saving checkpoint to ' .. savefile)
-         local checkpoint = {}
-         checkpoint.protos = protos
-         checkpoint.opt = opt
-         checkpoint.train_bpcs = train_bpcs
-         checkpoint.val_bpc = val_bpc
-         checkpoint.val_bpc = val_bpc
-         checkpoint.i = i
-         checkpoint.epoch = epoch
-         checkpoint.vocab = loader.vocab_mapping
-         torch.save(savefile, checkpoint)
+         if not best_val_bpc or val_bpc < best_val_bpc then
+            local savekey = opt.savefile == '' and log_pfx or opt.savefile
+            local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', checkpoint_dir, savekey, epoch, val_bpc)
+            print('saving checkpoint to ' .. savefile)
+            local checkpoint = {}
+            checkpoint.protos = protos
+            checkpoint.opt = opt
+            checkpoint.train_bpcs = train_bpcs
+            checkpoint.val_bpc = val_bpc
+            checkpoint.val_bpc = val_bpc
+            checkpoint.i = i
+            checkpoint.epoch = epoch
+            checkpoint.vocab = loader.vocab_mapping
+            torch.save(savefile, checkpoint)
+            if current_best then os.remove(current_best) end
+            current_best = savefile
+            best_val_bpc = val_bpc
+         else
+            print(string.format('val_bpc has increased, not saving %.2f > %.2f', val_bpc, best_val_bpc))
+         end
       end
 
       if i % opt.print_every == 0 then
