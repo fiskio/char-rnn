@@ -248,8 +248,9 @@ local iterations_per_epoch = loader.ntrain
 local loss0 = nil
 local bmt
 -- setup logger
-local train_logger = optim.Logger('train.log')
-local valid_logger = optim.Logger('valid.log')
+local log_dir = 'log/'..opt.data_dir:split('/')[2]..'/'
+local train_logger = optim.Logger(log_dir..opt.optim..'.train.log')
+local valid_logger = optim.Logger(log_dir..opt.optim..'.valid.log')
 train_logger:setNames{'train_bpc'}
 valid_logger:setNames{'train_bpc', 'val_bpc'}
 train_logger:style{'-'}
