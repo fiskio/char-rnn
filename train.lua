@@ -24,6 +24,8 @@ require 'util.misc'
 local CharSplitLMMinibatchLoader = require 'util.CharSplitLMMinibatchLoader'
 local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
+local GRU = require 'model.GRU'
+local RNN = require 'model.RNN'
 
 cmd = torch.CmdLine()
 cmd:text()
@@ -91,15 +93,30 @@ if not path.exists(opt.checkpoint_dir) then lfs.mkdir(opt.checkpoint_dir) end
 -- define the model: prototypes for one timestep, then clone them in time
 protos = {}
 protos.embed = OneHot(vocab_size)
-print('creating an LSTM with ' .. opt.num_layers .. ' layers')
-protos.rnn = LSTM.lstm(vocab_size, opt.rnn_size, opt.num_layers, opt.dropout)
+
+-- which units?
+if opt.model == 'lstm' then
+   print('creating an LSTM with ' .. opt.num_layers .. ' layers')
+   protos.rnn = LSTM.lstm(vocab_size, opt.rnn_size, opt.num_layers, opt.dropout)
+elseif opt.model == 'gru' then
+   print('creating a GRU with ' .. opt.num_layers .. ' layers')
+   protos.rnn = GRU.gru(vocab_size, opt.rnn_size, opt.num_layers)
+elseif opt.model == 'rnn' then
+   print('creating a RNN with ' .. opt.num_layers .. ' layers')
+   protos.rnn = RNN.rnn(vocab_size, opt.rnn_size, opt.num_layers)
+else
+   error('unsupported recurrent units: '..opt.model)
+end
+
 -- the initial state of the cell/hidden states
 init_state = {}
 for L=1,opt.num_layers do
     local h_init = torch.zeros(opt.batch_size, opt.rnn_size)
     if opt.gpuid >=0 then h_init = h_init:cuda() end
     table.insert(init_state, h_init:clone())
-    table.insert(init_state, h_init:clone())
+    if opt.model == 'lstm' then
+       table.insert(init_state, h_init:clone())
+    end
 end
 state_predict_index = #init_state -- index of blob to make prediction from
 -- classifier on top

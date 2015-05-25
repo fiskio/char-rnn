@@ -1,7 +1,7 @@
 local RNN = {}
 
 function RNN.rnn(input_size, rnn_size, n)
-  
+
   -- there are n+1 inputs (hiddens on each layer and x)
   local inputs = {}
   table.insert(inputs, nn.Identity()()) -- x
@@ -12,7 +12,7 @@ function RNN.rnn(input_size, rnn_size, n)
   local x, input_size_L
   local outputs = {}
   for L = 1,n do
-    
+
     local prev_h = inputs[L+1]
     if L == 1 then x = inputs[1] else x = outputs[L-1] end
     if L == 1 then input_size_L = input_size else input_size_L = rnn_size end
