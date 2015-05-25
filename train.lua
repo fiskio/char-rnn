@@ -26,6 +26,7 @@ local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
 local GRU = require 'model.GRU'
 local RNN = require 'model.RNN'
+local IRNN = require 'model.IRNN'
 
 cmd = torch.CmdLine()
 cmd:text()
@@ -96,17 +97,17 @@ protos.embed = OneHot(vocab_size)
 
 -- which units?
 if opt.model == 'lstm' then
-   print('creating an LSTM with ' .. opt.num_layers .. ' layers')
    protos.rnn = LSTM.lstm(vocab_size, opt.rnn_size, opt.num_layers, opt.dropout)
 elseif opt.model == 'gru' then
-   print('creating a GRU with ' .. opt.num_layers .. ' layers')
    protos.rnn = GRU.gru(vocab_size, opt.rnn_size, opt.num_layers)
 elseif opt.model == 'rnn' then
-   print('creating a RNN with ' .. opt.num_layers .. ' layers')
    protos.rnn = RNN.rnn(vocab_size, opt.rnn_size, opt.num_layers)
+elseif opt.model == 'irnn' then
+   protos.rnn = IRNN.irnn(vocab_size, opt.rnn_size, opt.num_layers)
 else
    error('unsupported recurrent units: '..opt.model)
 end
+print('creating a '..opt.model:upper()..' with '..opt.num_layers..' layers')
 
 -- the initial state of the cell/hidden states
 init_state = {}
@@ -114,6 +115,7 @@ for L=1,opt.num_layers do
     local h_init = torch.zeros(opt.batch_size, opt.rnn_size)
     if opt.gpuid >=0 then h_init = h_init:cuda() end
     table.insert(init_state, h_init:clone())
+    -- lstm requires 2 initial states
     if opt.model == 'lstm' then
        table.insert(init_state, h_init:clone())
     end
