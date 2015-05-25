@@ -298,8 +298,8 @@ for e = 1, opt.max_epochs do
          -- evaluate bpc on validation data
          vtimer:reset()
          local val_loss = eval_split(2) -- 2 = validation
-         print(string.format('Validation took: %s', os.date("!%X", vtimer:time().real)))
          val_bpc = math.log(math.exp(val_loss),2)
+         print(string.format('Validation took: %s - vbpc: %.2f', os.date("!%X", vtimer:time().real), val_bpc))
          val_bpcs[i] = val_bpc
          valid_logger:add{ train_bpc, val_bpc }
          if opt.plot then valid_logger:plot() end
