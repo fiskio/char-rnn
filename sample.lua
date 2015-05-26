@@ -63,7 +63,7 @@ opt.rnn_size = protos.softmax.modules[rnn_idx].weight:size(2)
 local current_state, state_predict_index
 local model = checkpoint.opt.model
 
-print('creating an LSTM...')
+print('creating a '..model:upper()..'...')
 local num_layers = checkpoint.opt.num_layers or 1 -- or 1 is for backward compatibility
 current_state = {}
 for L=1,checkpoint.opt.num_layers do
@@ -71,7 +71,9 @@ for L=1,checkpoint.opt.num_layers do
     local h_init = torch.zeros(1, opt.rnn_size)
     if opt.gpuid >= 0 then h_init = h_init:cuda() end
     table.insert(current_state, h_init:clone())
-    table.insert(current_state, h_init:clone())
+    if model == 'lstm' then
+       table.insert(current_state, h_init:clone())
+    end
 end
 state_predict_index = #current_state -- last one is the top h
 local seed_text = opt.primetext
