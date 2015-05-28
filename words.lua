@@ -52,10 +52,10 @@ checkpoint = torch.load(opt.model)
 -- load vocab filter (whitelist)
 local vocab_filter = {}
 for line in io.lines(opt.vocab) do
-   local word = line:split('%s+')[1]
-   vocab_filter[word] = true
+   local word = line:split('%s+')[2]
+   if word then vocab_filter[word] = true end
 end
-print(vocab_filter['but'])
+
 local vocab = checkpoint.vocab
 local ivocab = {}
 for c,i in pairs(vocab) do ivocab[i] = c end
@@ -124,24 +124,29 @@ local function next_char(state, spi)
 end
 
 local function next_words(state, spi)
-   local nw = ''
-   local nc
-   while not nc or nc:find('%w') do
+   local nc, nw
+   while true do
+      if nc then
+        if nc:find('%A') then
+           break
+        end
+      end
       nc, state = next_char(state, spi)
       nc = ivocab[nc]
-      if nc:find('%w') then nw = nw..nc end
+      if nc:find('%a') then
+         nw = nw and nw..nc or nc
+      end
    end
    -- is this a real word?
-   if not vocab_filter[nw] then
-      if nw:find('%S') then miss = miss + 1 end
-      io.write(sys.COLORS.red..nw..'\027[00m ')
-      return nil
+   if nw  and not vocab_filter[nw] then
+	miss = miss + 1
+        io.write(sys.COLORS.red..nw..'\027[00m ')
+        return nil
    end
    return nw
 end
 
 -- start sampling/argmaxing
--- for i=1, opt.length do
 while hit+miss <= opt.length do
    local next_word
    while true do
@@ -153,8 +158,9 @@ while hit+miss <= opt.length do
          wtot = wtot + 1
          words[next_word] = true
       end
-      io.write(next_word..' ') end
+   end
    hit = hit + 1
+   io.write(next_word..' ')
 end
 io.write('\n') io.flush()
 print(string.format('Hit: %s Miss: %s or %.2f%%', hit, miss, 100 * (miss/hit)))
