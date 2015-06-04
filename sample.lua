@@ -26,10 +26,12 @@ cmd:text('Options')
 cmd:argument('-model','model checkpoint to use for sampling')
 -- optional parameters
 cmd:option('-seed',123,'random number generator\'s seed')
-cmd:option('-sample',1,' 0 to use max at each timestep, 1 to sample at each timestep')
+cmd:option('-argmax',false,'use max at each timestep, equivalent to -topK 1')
 cmd:option('-primetext'," ",'used as a prompt to "seed" the state of the LSTM using a given sequence, before we sample.')
+cmd:option('-sentence',false,'generate characters until a full stop')
 cmd:option('-length',2000,'number of characters to sample')
 cmd:option('-temperature',1,'temperature of sampling')
+cmd:option('-topK',0,'number of prediction to sample from')
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
 cmd:text()
 
@@ -82,7 +84,8 @@ local prev_char
 protos.rnn:evaluate() -- put in eval mode so that dropout works properly
 
 -- do a few seeded timesteps
-print('seeding with ' .. seed_text)
+print('')
+io.write(sys.COLORS.green .. seed_text..'\027[00m')
 for c in seed_text:gmatch'.' do
     prev_char = torch.Tensor{vocab[c]}
     if opt.gpuid >= 0 then prev_char = prev_char:cuda() end
@@ -99,22 +102,32 @@ for i=1, opt.length do
     next_h = next_h / opt.temperature
     local log_probs = protos.softmax:forward(next_h)
 
-    if opt.sample == 0 then
+    if opt.argmax then
         -- use argmax
         local _, prev_char_ = log_probs:max(2)
         prev_char = prev_char_:resize(1)
     else
         -- use sampling
         local probs = torch.exp(log_probs):squeeze()
+        local probs, ids = torch.sort(probs, 1, true)
+        if opt.topK > probs:size(1) then error('-topK max value: '..probs:size(1)) end
+        if opt.topK > 0 then
+           probs = probs:sub(1, opt.topK)
+           ids = ids:sub(1, opt.topK)
+        end
         prev_char = torch.multinomial(probs:float(), 1):resize(1):float()
+        prev_char = ids[prev_char[1]]
+        prev_char = torch.FloatTensor{prev_char}
     end
 
     -- forward the rnn for next character
     local embedding = protos.embed:forward(prev_char)
     current_state = protos.rnn:forward{embedding, unpack(current_state)}
     if type(current_state) ~= 'table' then current_state = {current_state} end
-
-    io.write(ivocab[prev_char[1]])
+    local current_char = ivocab[prev_char[1]]
+    io.write(current_char)
+    -- full sentence?
+    if opt.sentence and current_char:find('%.') then break; end
 end
 io.write('\n') io.flush()
 
