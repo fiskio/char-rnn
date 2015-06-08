@@ -99,7 +99,7 @@ end
 local hit, miss, wtot = 0, 0, 0
 local words = {}
 
--- predict next char
+-- onpredict next char
 local function next_char(state, spi)
    -- softmax from previous timestep
    local next_h = state[spi]
@@ -125,6 +125,7 @@ end
 
 local function next_words(state, spi)
    local nc, nw
+   local orig_state = state
    while true do
       if nc then
         if nc:find('%A') then
@@ -139,18 +140,19 @@ local function next_words(state, spi)
    end
    -- is this a real word?
    if nw  and not vocab_filter[nw] then
-	miss = miss + 1
+        miss = miss + 1
         io.write(sys.COLORS.red..nw..'\027[00m ')
-        return nil
+        return nil, orig_state
    end
-   return nw
+   return nw, state
 end
 
 -- start sampling/argmaxing
 while hit+miss <= opt.length do
    local next_word
+   local next_state = current_state
    while true do
-      next_word = next_words(current_state, state_predict_index)
+      next_word, next_state = next_words(next_state, state_predict_index)
       if next_word then break end
    end
    if next_word then
