@@ -35,12 +35,14 @@ cmd:option('-temperature',1,'temperature of sampling')
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
 cmd:option('-vocab','vocab.txt','vocabulary whitelist filter')
 
-cmd:option('-stop_list',{'%S'} ,'regex of stop characters')
-cmd:option('-branch',20,'number of next characters to consider at each step')
-cmd:option('-prune',20,'maximum number of next characther expansion at each step')
-cmd:option('-depth',10,'maxiumum length of any predicted words')
-cmd:option('-n',10,'maxiumum length of any predicted words')
+--cmd:option('-stop_list',{'%S'} ,'regex of stop characters')
+cmd:option('-pc',0.8,'minimum probility mass to consider at each branching step')
+cmd:option('-min_branch',1,'minimum number of next characters to consider at each step')
+cmd:option('-queue_size',20,'maximum number of elements in the queue at each step')
+cmd:option('-depth',10,'maximum length of any predicted words')
+cmd:option('-n',10,'number of ranked word candidates to return')
 
+cmd:option('-verbose',false,'print excessive statistics')
 cmd:option('-debug',false,'print excessive debug')
 cmd:text()
 
@@ -130,6 +132,18 @@ function expandCtx(ctx, n)
    return out
 end
 
+function branch_coverage(probs, min_cov)
+   local n_branches = 0
+   local cov = 0
+   for i=1, probs:size(2) do
+      -- this is really cool!
+      cov = torch.exp(probs[{{}, {1, i}}]):sum() / probs:size(1)
+      n_branches = i
+      if cov >= min_cov then break end
+   end
+   return n_branches, cov
+end
+
 -- @states    table of tensors, each row is a current partial words
 -- @probs     array of probabilities for each row of prefixes tensors
 -- @contexts  array of partial words for each row of prefixes tensors
@@ -145,7 +159,14 @@ local function branch_next(states, prefixes, probs, n_best)
    -- get n_best possible expansions
    dprint(log_probs:size())
    local sorted_probs, sorted_ids = torch.sort(log_probs, 2, true)
-   sorted_probs = sorted_probs:narrow(2, 1, n_best)
+   local n_branches, converage = branch_coverage(sorted_probs, opt.pc)
+   local n_best = (n_branches < opt.min_branch) and opt.min_branch or n_branches
+   -- show branching stats
+   if opt.verbose then
+      print(opt.min_branch, n_branches, converage, n_best)
+   end
+
+ sorted_probs = sorted_probs:narrow(2, 1, n_best)
    sorted_ids = sorted_ids:narrow(2, 1, n_best)
    dprint(sorted_probs:size(), sorted_ids:size())
 
@@ -196,11 +217,13 @@ local function prune_bestOverAll(states, prefixes, probs, n_best)
    -- find the most probables
    local tprobs = torch.Tensor(probs)
    local sorted_probs, sorted_ids = torch.sort(tprobs, true)
-   sorted_probs = sorted_probs:sub(1, n_best)
-   sorted_ids = sorted_ids:sub(1, n_best):long()
+   --n_best = (n_best < sorted_probs:size(1)) and n_best or sorted_probs:size(1)
+   if n_best < sorted_probs:size(1) then
+      sorted_probs = sorted_probs:sub(1, n_best)
+      sorted_ids = sorted_ids:sub(1, n_best):long()
+   end
    local best_probs = sorted_probs:totable()
    dprint(sorted_ids, sorted_probs)
-
    -- select prefixes
    local best_prefixes = {}
    for i=1,sorted_ids:size(1) do
@@ -234,9 +257,11 @@ function extract_words(words, word_probs, states, prefixes, probs)
       end
    end
    -- remove words from states, prefixes, probs
-   local t_keep_ids = torch.LongTensor(keep_ids)
-   for i, state in ipairs(states) do
-      states[i] = state:index(1, t_keep_ids)
+   if #keep_ids > 0 then
+      local t_keep_ids = torch.LongTensor(keep_ids)
+      for i, state in ipairs(states) do
+         states[i] = state:index(1, t_keep_ids)
+      end
    end
    local new_prefixes, new_probs = {}, {}
    for _, kid in ipairs(keep_ids) do
@@ -277,15 +302,14 @@ local prefixes, prob, wordToProb
 -- forward a few times
 for i=1, opt.depth do
    -- explore a new character expansion
-   states, prefixes, probs = branch_next(states, prefixes, probs, opt.branch)
+   states, prefixes, probs = branch_next(states, prefixes, probs, opt.min_branch)
    -- keep only the best ones
-   states, prefixes, probs = prune_bestOverAll(states, prefixes, probs, opt.prune)
+   states, prefixes, probs = prune_bestOverAll(states, prefixes, probs, opt.queue_size)
    -- are there any words already?
    words, word_probs, states, prefixes, probs = extract_words(words, word_probs, states, prefixes, probs)
    -- merge probabilities
    wordToProb = merge_words(wordToProb, words, word_probs)
    -- shall we stop?
-   --if tblx.size(wordToProb) >= opt.n then break end
    if #prefixes == 0 then break end
 end
 
@@ -313,16 +337,16 @@ end
 
 print(string.format('\nTotal Time: %.f ms', total_time*1000))
 
--- Also print second best
-print('')
-for word, prob in tblx.sortv(rest, desord) do
-   print(string.format('%.6f\t%s', prob, word))
-end
+if opt.verbose then
+   -- Also print second best
+   print('')
+   for word, prob in tblx.sortv(rest, desord) do
+      print(string.format('%.6f\t%s', prob, word))
+   end
 
--- Also print current unfinished partial words
----[[
-print('')
-for i, pfx in ipairs(prefixes) do
-   print(string.format('%.6f\t%s', math.exp(probs[i]), pfx..'..'))
+   -- Also print current unfinished partial words
+   print('')
+   for i, pfx in ipairs(prefixes) do
+      print(string.format('%.6f\t%s', math.exp(probs[i]), pfx..'..'))
+   end
 end
---]]
