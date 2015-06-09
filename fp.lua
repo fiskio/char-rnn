@@ -31,7 +31,7 @@ cmd:option('-seed',123,'random number generator\'s seed')
 cmd:option('-primetext'," ",'used as a prompt to "seed" the state of the LSTM using a given sequence, before we sample.')
 cmd:option('-temperature',1,'temperature of sampling')
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
-cmd:option('-vocab','vocab.txt','vocabulary whitelist filter')
+cmd:option('-vocab','','vocabulary whitelist filter')
 
 cmd:option('-pc',0.8,'minimum probility mass to consider at each branching step')
 cmd:option('-min_branch',1,'minimum number of next characters to consider at each step')
@@ -69,9 +69,11 @@ checkpoint = torch.load(opt.model)
 
 -- load vocab filter (whitelist)
 local vocab_filter = {}
-for line in io.lines(opt.vocab) do
-   local word = line:split('%s+')[2]
-   if word then vocab_filter[word] = true end
+if opt.vocab ~= '' then
+   for line in io.lines(opt.vocab) do
+      local word = line:split('%s+')[2]
+      if word then vocab_filter[word] = true end
+   end
 end
 
 local vocab = checkpoint.vocab
@@ -169,8 +171,6 @@ local function branch_next(states, prefixes, probs, n_best)
 
    -- create table of new expanded prefixes
    local new_prefixes = {}
-   --print(states[1]:size(1), #prefixes, #probs, sorted_ids:size())
-   --if #prefixes ~= sorted_ids:size(1) then print(prefixes) end
    for i, prefix in ipairs(prefixes) do
       for j=1,n_best do
          local char_id = sorted_ids[i][j]
@@ -189,17 +189,12 @@ local function branch_next(states, prefixes, probs, n_best)
    end
 
    -- forward the rnn for new states
-   --print(sorted_ids)
    local foo = sorted_ids:reshape(sorted_ids:nElement())
-   --print('FOO')
    dprint(foo)
    local embedding = protos.embed:forward(foo)
-   --print(embedding)
-   --print(states)
 
    -- forward the network for the next iteration
    for i,state in ipairs(states) do
-      --states[i] = state:repeatTensor(n_best, 1)
       states[i] = expandCtx(state, n_best)
    end
    local new_states = protos.rnn:forward{embedding, unpack(states)}
@@ -214,7 +209,6 @@ local function prune_bestOverAll(states, prefixes, probs, n_best)
    -- find the most probables
    local tprobs = torch.Tensor(probs)
    local sorted_probs, sorted_ids = torch.sort(tprobs, true)
-   --n_best = (n_best < sorted_probs:size(1)) and n_best or sorted_probs:size(1)
    if n_best < sorted_probs:size(1) then
       sorted_probs = sorted_probs:sub(1, n_best)
       sorted_ids = sorted_ids:sub(1, n_best):long()
@@ -246,9 +240,15 @@ function extract_words(words, word_probs, states, prefixes, probs)
    for i,pfx in ipairs(prefixes) do
       local last_char = pfx:sub(#pfx)
       if last_char:find('%A') then
-         table.insert(words, pfx)
-         table.insert(word_probs, probs[i])
-         table.insert(word_ids, i)
+         -- check if it is an allowed word
+         local word = pfx:sub(1, #pfx-1)
+         if opt.vocab == '' or vocab_filter[word] then
+            table.insert(words, pfx)
+            table.insert(word_probs, probs[i])
+            table.insert(word_ids, i)
+         else
+            if opt.verbose then print('rejecting: '..sys.COLORS.red..word) end
+         end
       else
          table.insert(keep_ids, i)
       end
