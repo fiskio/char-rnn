@@ -99,12 +99,62 @@ end
 local hit, miss, wtot = 0, 0, 0
 local words = {}
 
+-- @states    table of tensors, each row is a current partial words
+-- @probs     array of probabilities for each row of prefixes tensors
+-- @contexts  array of partial words for each row of prefixes tensors
+local function branch_next(states, prefixes, probs)
+   print(states)
+   -- softmax from previous timestep
+   local next_h = states[#states]
+   next_h = next_h / opt.temperature
+   local log_probs = protos.softmax:forward(next_h)
+
+   -- get n_best possible expansions
+   print(log_probs:size())
+   local n_best = 5
+   local sorted_probs, sorted_ids = torch.sort(log_probs, 2, true)
+   sorted_probs = sorted_probs:narrow(2, 1, n_best)
+   sorted_ids = sorted_ids:narrow(2, 1, n_best)
+   print(sorted_probs:size(), sorted_ids:size())
+
+   -- create table of new expanded prefixes
+   local new_prefixes = {}
+   for i, prefix in ipairs(prefixes) do
+      for j=1,n_best do
+         local char_id = sorted_ids[i][j]
+         local np = prefix .. ivocab[char_id]
+         table.insert(new_prefixes, np)
+      end
+   end
+   -- create probabilities for new prefixes
+   local new_probs = {}
+   for i, prob in ipairs(probs) do
+      for j=1,n_best do
+         local ep = sorted_probs[i][j]
+         local np = prob + ep
+         table.insert(new_probs, np)
+      end
+   end
+   -- forward the rnn for new states
+   print(sorted_ids)
+   local foo = sorted_ids[1]
+   print(foo)
+   local embedding = protos.embed:forward(foo)
+   print(embedding)
+   local new_states = protos.rnn:forward{embedding, unpack(states)}
+   if type(new_states) ~= 'table' then new_states = {new_states} end
+
+   return new_states, new_prefixes, new_prefixes
+end
+branch_next(current_state, {""}, {0})
+error()
 -- onpredict next char
 local function next_char(state, spi)
    -- softmax from previous timestep
    local next_h = state[spi]
    next_h = next_h / opt.temperature
    local log_probs = protos.softmax:forward(next_h)
+   print(next_h:size())
 
    if opt.sample then
       -- use sampling
@@ -167,4 +217,3 @@ end
 io.write('\n') io.flush()
 print(string.format('Hit: %s Miss: %s or %.2f%%', hit, miss, 100 * (miss/hit)))
 print(string.format('The model predicted %d different words, out of %d', wtot, hit+miss))
-
