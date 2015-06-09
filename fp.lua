@@ -17,6 +17,7 @@ require 'util.OneHot'
 require 'util.misc'
 
 local tblx = require 'pl.tablex'
+local desord = function(x,y) return x > y end
 
 cmd = torch.CmdLine()
 cmd:text()
@@ -83,22 +84,22 @@ local rnn_idx = #protos.softmax.modules - 1
 opt.rnn_size = protos.softmax.modules[rnn_idx].weight:size(2)
 
 -- initialize the rnn state
-local current_state, state_predict_index
+local states, state_predict_index
 local model = checkpoint.opt.model
 
 print('creating a '..model:upper()..'...')
 local num_layers = checkpoint.opt.num_layers or 1 -- or 1 is for backward compatibility
-current_state = {}
+states = {}
 for L=1,checkpoint.opt.num_layers do
     -- c and h for all layers
     local h_init = torch.zeros(1, opt.rnn_size)
     if opt.gpuid >= 0 then h_init = h_init:cuda() end
-    table.insert(current_state, h_init:clone())
+    table.insert(states, h_init:clone())
     if model == 'lstm' then
-       table.insert(current_state, h_init:clone())
+       table.insert(states, h_init:clone())
     end
 end
-state_predict_index = #current_state -- last one is the top h
+state_predict_index = #states -- last one is the top h
 local seed_text = opt.primetext
 local prev_char
 
@@ -110,8 +111,8 @@ for c in seed_text:gmatch'.' do
     prev_char = torch.Tensor{vocab[c]}
     if opt.gpuid >= 0 then prev_char = prev_char:cuda() end
     local embedding = protos.embed:forward(prev_char)
-    current_state = protos.rnn:forward{embedding, unpack(current_state)}
-    if type(current_state) ~= 'table' then current_state = {current_state} end
+    states = protos.rnn:forward{embedding, unpack(states)}
+    if type(states) ~= 'table' then states = {states} end
 end
 
 local hit, miss, wtot = 0, 0, 0
@@ -133,6 +134,8 @@ end
 -- @probs     array of probabilities for each row of prefixes tensors
 -- @contexts  array of partial words for each row of prefixes tensors
 local function branch_next(states, prefixes, probs, n_best)
+   prefixes = prefixes or {''}
+   probs = probs or {0}
    dprint(states)
    -- softmax from previous timestep
    local next_h = states[#states]
@@ -217,8 +220,6 @@ local function prune_bestOverAll(states, prefixes, probs, n_best)
 end
 
 function extract_words(words, word_probs, states, prefixes, probs)
-   --local words = {}
-   --local word_probs= {}
    local word_ids = {}
    local keep_ids = {}
    -- is last charachter a stop?
@@ -243,14 +244,14 @@ function extract_words(words, word_probs, states, prefixes, probs)
       table.insert(new_probs, probs[kid])
    end
    assert(#prefixes == #probs)
-   --assert(#prefixes == states[1][1]:size(1))
    return words, word_probs, states, new_prefixes, new_probs
 end
 
 -- aggregate the probability of multiple word+stop
 -- i.e. 'am' = 'am ' + .. + 'am,'
-function merge_words(words, probs)
-   local wordToProb = {}
+function merge_words(wordToProb, words, probs)
+   wordToProb = wordToProb or {}
+   words = words or {}
    for i, word in ipairs(words) do
       local last_char = word:sub(#word)
       local actual_word = word:sub(1,#word-1)
@@ -261,60 +262,67 @@ function merge_words(words, probs)
    return wordToProb
 end
 
-function spairs(t, order)
-    -- collect the keys
-    local keys = {}
-    for k in pairs(t) do keys[#keys+1] = k end
-
-    -- if order function given, sort by it by passing the table and keys a, b,
-    -- otherwise just sort the keys
-    if order then
-        table.sort(keys, function(a,b) return order(t, a, b) end)
-    else
-        table.sort(keys)
-    end
-
-    -- return the iterator function
-    local i = 0
-    return function()
-        i = i + 1
-        if keys[i] then
-            return keys[i], t[keys[i]]
-        end
-    end
+function normalise(wordToProb)
+   for w, p in ipairs(wordToProb) do
+      wordToProb[w] = p / w:len()
+   end
+   return wordToProb
 end
 
 local words, word_probs = {}, {}
 
 local t1 = torch.Timer()
-local states, prefixes, probs = branch_next(current_state, {""}, {0}, opt.branch)
---print(states, prefixes, probs)
-for i=1,opt.depth do
+
+local prefixes, prob, wordToProb
+-- forward a few times
+for i=1, opt.depth do
    -- explore a new character expansion
    states, prefixes, probs = branch_next(states, prefixes, probs, opt.branch)
    -- keep only the best ones
    states, prefixes, probs = prune_bestOverAll(states, prefixes, probs, opt.prune)
    -- are there any words already?
    words, word_probs, states, prefixes, probs = extract_words(words, word_probs, states, prefixes, probs)
+   -- merge probabilities
+   wordToProb = merge_words(wordToProb, words, word_probs)
    -- shall we stop?
-   if #words >= opt.n or #prefixes == 0 then break end
+   --if tblx.size(wordToProb) >= opt.n then break end
+   if #prefixes == 0 then break end
 end
 
-local wordToProb = merge_words(words, word_probs)
+-- normalise probabilities by word length
+wordToProb = normalise(wordToProb)
+
+local topN, rest = {}, {}
+local size = 0
+for word, prob in tblx.sortv(wordToProb, desord) do
+   if size < opt.n then
+      size = size + 1
+      topN[word] = prob
+   else
+      rest[word] = prob
+   end
+end
+
 local total_time = t1:time().real
 
 -- pretty print
 local desord = function(x,y) return x > y end
-for word, prob in tblx.sortv(wordToProb, desord) do
-   print(string.format('%s\t%.5f', word, prob))
+for word, prob in tblx.sortv(topN, desord) do
+   print(string.format('%.6f\t%s', prob, word))
 end
 
 print(string.format('\nTotal Time: %.f ms', total_time*1000))
+
+-- Also print second best
+print('')
+for word, prob in tblx.sortv(rest, desord) do
+   print(string.format('%.6f\t%s', prob, word))
+end
 
 -- Also print current unfinished partial words
 ---[[
 print('')
 for i, pfx in ipairs(prefixes) do
-   print(pfx, probs[i])
+   print(string.format('%.6f\t%s', math.exp(probs[i]), pfx..'..'))
 end
 --]]
