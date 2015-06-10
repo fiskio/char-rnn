@@ -67,13 +67,25 @@ if not lfs.attributes(opt.model, 'mode') then
     print('Error: File ' .. opt.model .. ' does not exist. Are you sure you didn\'t forget to prepend cv/ ?') end
 checkpoint = torch.load(opt.model)
 
--- load vocab filter (whitelist)
-local vocab_filter = {}
+-- was a vocabulary whitelist given?
+local vocab_filter, prefix_filter = {}, {}
+local rej_words, rej_prefixes = {}, {}
+
 if opt.vocab ~= '' then
+   -- create word filter
    for line in io.lines(opt.vocab) do
       local word = line:split('%s+')[2]
       if word then vocab_filter[word] = true end
    end
+   print('#vocab_filter:', tblx.size(vocab_filter))
+   -- create prefix filter
+   for w,_ in pairs(vocab_filter) do
+      for i=1,#w-1 do
+         local pfx = w:sub(1, i)
+         if pfx then prefix_filter[pfx] = true end
+      end
+   end
+   print('#prefix_filter:', tblx.size(prefix_filter))
 end
 
 local vocab = checkpoint.vocab
@@ -119,12 +131,12 @@ end
 local hit, miss, wtot = 0, 0, 0
 local words = {}
 
-function expandCtx(ctx, n)
-   local out = torch.Tensor(ctx:size(1)*n, ctx:size(2)):typeAs(ctx)
+function expandStates(state, n)
+   local out = torch.Tensor(state:size(1)*n, state:size(2)):typeAs(state)
    local idx = 1
-   for i=1,ctx:size(1) do
+   for i=1,state:size(1) do
       for j=1,n do
-         out[{{idx},{}}] = ctx[i]
+         out[{{idx},{}}] = state[i]
          idx = idx + 1
       end
    end
@@ -195,12 +207,38 @@ local function branch_next(states, prefixes, probs, n_best)
 
    -- forward the network for the next iteration
    for i,state in ipairs(states) do
-      states[i] = expandCtx(state, n_best)
+      states[i] = expandStates(state, n_best)
    end
    local new_states = protos.rnn:forward{embedding, unpack(states)}
    if type(new_states) ~= 'table' then new_states = {new_states} end
 
    return new_states, new_prefixes, new_probs
+end
+
+local function prune_by_prefix(states, prefixes, probs)
+   if opt.vocab == '' then
+      return states, prefixes, probs
+   end
+   local new_prefixes, new_probs, keep_states = {}, {}, {}
+   -- is it an allowed prefix?
+   for i, pfx in ipairs(prefixes) do
+      local last_char = pfx:sub(#pfx)
+      if prefix_filter[pfx] or vocab_filter[pfx] or last_char:find('%A') then
+         table.insert(new_prefixes, pfx)
+         table.insert(new_probs, probs[i])
+         table.insert(keep_states, i)
+      else
+         local rej_count = rej_prefixes[pfx] or 0
+         rej_prefixes[pfx] = rej_count + 1
+      end
+   end
+   -- prune states
+   local t_keep_states = torch.LongTensor(keep_states)
+   for i, state in ipairs(states) do
+      states[i] = state:index(1, t_keep_states)
+   end
+
+   return states, new_prefixes, new_probs
 end
 
 -- return the best n more probable over all
@@ -215,16 +253,16 @@ local function prune_bestOverAll(states, prefixes, probs, n_best)
    end
    local best_probs = sorted_probs:totable()
    dprint(sorted_ids, sorted_probs)
+
    -- select prefixes
    local best_prefixes = {}
    for i=1,sorted_ids:size(1) do
       local id = sorted_ids[i]
       table.insert(best_prefixes, prefixes[id])
    end
-
-   -- select states
    dprint('best_prefixes', best_prefixes)
 
+   -- select states
    dprint(states)
    for i, state in ipairs(states) do
       states[i] = state:index(1, sorted_ids)
@@ -247,7 +285,8 @@ function extract_words(words, word_probs, states, prefixes, probs)
             table.insert(word_probs, probs[i])
             table.insert(word_ids, i)
          else
-            if opt.verbose then print('rejecting: '..sys.COLORS.red..word) end
+            local rej_count = rej_words[word] or 0
+            rej_words[word] = rej_count + 1
          end
       else
          table.insert(keep_ids, i)
@@ -300,6 +339,8 @@ local prefixes, prob, wordToProb
 for i=1, opt.depth do
    -- explore a new character expansion
    states, prefixes, probs = branch_next(states, prefixes, probs, opt.min_branch)
+   -- filter bogous sub-words
+   states, prefixes, probs = prune_by_prefix(states, prefixes, probs)
    -- keep only the best ones
    states, prefixes, probs = prune_bestOverAll(states, prefixes, probs, opt.queue_size)
    -- are there any words already?
@@ -345,5 +386,15 @@ if opt.verbose then
    print('')
    for i, pfx in ipairs(prefixes) do
       print(string.format('%.6f\t%s', math.exp(probs[i]), pfx..'..'))
+   end
+
+   -- Also print rejected words
+   for word, count in pairs(rej_words) do
+      print(count, sys.COLORS.red..word)
+   end
+
+   -- Also print rejected sub-words
+   for pfx, count in pairs(rej_prefixes) do
+      print(count, sys.COLORS.yellow..pfx)
    end
 end
