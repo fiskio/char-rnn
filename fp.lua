@@ -69,7 +69,8 @@ torch.manualSeed(opt.seed)
 
 -- load the model checkpoint
 if not lfs.attributes(opt.model, 'mode') then
-    print('Error: File ' .. opt.model .. ' does not exist. Are you sure you didn\'t forget to prepend cv/ ?') end
+    print('Error: File ' .. opt.model .. ' does not exist. Are you sure you didn\'t forget to prepend cv/ ?') 
+end
 checkpoint = torch.load(opt.model)
 
 -- was a vocabulary whitelist given?
@@ -98,17 +99,17 @@ local ivocab = {}
 for c,i in pairs(vocab) do ivocab[i] = c end
 
 function init_model(checkpoint)
+   checkpoint = torch.load(opt.model)
    protos = checkpoint.protos
    local rnn_idx = #protos.softmax.modules - 1
    opt.rnn_size = protos.softmax.modules[rnn_idx].weight:size(2)
 
    -- initialize the rnn state
-   local states, state_predict_index
    local model = checkpoint.opt.model
 
    stderr('creating a '..model:upper()..'...')
    local num_layers = checkpoint.opt.num_layers or 1 -- or 1 is for backward compatibility
-   states = {}
+   local states = {}
    for L=1,checkpoint.opt.num_layers do
       -- c and h for all layers
       local h_init = torch.zeros(1, opt.rnn_size)
@@ -118,9 +119,6 @@ function init_model(checkpoint)
          table.insert(states, h_init:clone())
       end
    end
-
-   state_predict_index = #states -- last one is the top h
-   local prev_char
 
    protos.rnn:evaluate() -- put in eval mode so that dropout works properly
    return protos, states
@@ -167,8 +165,8 @@ end
 -- @probs     array of probabilities for each row of prefixes tensors
 -- @contexts  array of partial words for each row of prefixes tensors
 local function branch_next(model, states, prefixes, probs, n_best)
-   prefixes = prefixes or {''}
-   probs = probs or {0}
+   --prefixes = prefixes or {''}
+   --probs = probs or {0}
    dprint(states)
    -- softmax from previous timestep
    local next_h = states[#states]
@@ -202,6 +200,7 @@ local function branch_next(model, states, prefixes, probs, n_best)
    local new_probs = {}
    for i, prob in ipairs(probs) do
       for j=1,n_best do
+         --print(j)
          local ep = sorted_probs[i][j]
          local np = prob + ep
          table.insert(new_probs, np)
@@ -339,78 +338,77 @@ function normalise(wordToProb)
 end
 
 function predict_words(model, states)
+   local words, word_probs = {}, {}
+   local prefixes = {''} -- TODO subword
+   local probs = {0}
+   local wordToProb = {}
+   local t1 = torch.Timer()
 
-local words, word_probs = {}, {}
-local prefixes, prob, wordToProb
-local t1 = torch.Timer()
-
--- forward a few times
-for i=1, opt.depth do
-   -- explore a new character expansion
-   states, prefixes, probs = branch_next(model, states, prefixes, probs, opt.min_branch)
-   -- filter bogous sub-words
-   states, prefixes, probs = prune_by_prefix(states, prefixes, probs)
-   -- keep only the best ones
-   states, prefixes, probs = prune_bestOverAll(states, prefixes, probs, opt.queue_size)
-   -- are there any words already?
-   words, word_probs, states, prefixes, probs = extract_words(words, word_probs, states, prefixes, probs)
-   -- merge probabilities
-   wordToProb = merge_words(wordToProb, words, word_probs)
-   -- shall we stop?
-   if #prefixes == 0 then break end
-end
-
--- normalise probabilities by word length
-wordToProb = normalise(wordToProb)
-
-local topN, rest = {}, {}
-local size = 0
-for word, prob in tblx.sortv(wordToProb, desord) do
-   if size < opt.n then
-      size = size + 1
-      topN[word] = prob
-   else
-      rest[word] = prob
-   end
-end
-
-local total_time = t1:time().real
-
-stderr(string.format('\nTotal Time: %.f ms', total_time*1000))
-
-if opt.verbose then
-   -- Also print second best
-   print('')
-   for word, prob in tblx.sortv(rest, desord) do
-      print(string.format('%.6f\t%s', prob, word))
+   -- forward a few times
+   for i=1, opt.depth do
+      -- explore a new character expansion
+      states, prefixes, probs = branch_next(model, states, prefixes, probs, opt.min_branch)
+      -- filter bogous sub-words
+      states, prefixes, probs = prune_by_prefix(states, prefixes, probs)
+      -- keep only the best ones
+      states, prefixes, probs = prune_bestOverAll(states, prefixes, probs, opt.queue_size)
+      -- are there any words already?
+      words, word_probs, states, prefixes, probs = extract_words(words, word_probs, states, prefixes, probs)
+      -- merge probabilities
+      wordToProb = merge_words(wordToProb, words, word_probs)
+      -- shall we stop?
+      if #prefixes == 0 then break end
    end
 
-   -- Also print current unfinished partial words
-   print('')
-   for i, pfx in ipairs(prefixes) do
-      print(string.format('%.6f\t%s', math.exp(probs[i]), pfx..'..'))
+   -- normalise probabilities by word length
+   wordToProb = normalise(wordToProb)
+
+   local topN, rest = {}, {}
+   local size = 0
+   for word, prob in tblx.sortv(wordToProb, desord) do
+      if size < opt.n then
+         size = size + 1
+         topN[word] = prob
+      else
+         rest[word] = prob
+      end
    end
 
-   -- Also print rejected words
-   for word, count in pairs(rej_words) do
-      print(count, sys.COLORS.red..word)
-   end
+   local total_time = t1:time().real
 
-   -- Also print rejected sub-words
-   for pfx, count in pairs(rej_prefixes) do
-      print(count, sys.COLORS.yellow..pfx)
+   stderr(string.format('\nTotal Time: %.f ms', total_time*1000))
+
+   if opt.verbose then
+      -- Also print second best
+      print('')
+      for word, prob in tblx.sortv(rest, desord) do
+         print(string.format('%.6f\t%s', prob, word))
+      end
+
+      -- Also print current unfinished partial words
+      print('')
+      for i, pfx in ipairs(prefixes) do
+         print(string.format('%.6f\t%s', math.exp(probs[i]), pfx..'..'))
+      end
+
+      -- Also print rejected words
+      for word, count in pairs(rej_words) do
+         print(count, sys.COLORS.red..word)
+      end
+
+      -- Also print rejected sub-words
+      for pfx, count in pairs(rej_prefixes) do
+         print(count, sys.COLORS.yellow..pfx)
+      end
    end
-end
    return topN
 end
 
-function lmc_predict(tokens)
+function lmc_predict(tokens, model, states)
    assert(#tokens == 2)
    local context = tokens[2]
-   local model, states = init_model(checkpoint)
-   if opt.primetext ~= '' then seed(opt.primetext, model, states) end
-   seed(context, protos)
-   local predictions = predict_words()
+   model, states = seed(context, model, states)
+   local predictions = predict_words(model, states)
    local output = ''
    for word, prob in tblx.sortv(predictions, desord) do
       output = output..word..'\t'
@@ -432,13 +430,14 @@ end
 
 function lmc_mode()
    while true do
+   local model, states = init_model(checkpoint)
       local line = io.read('*line')
       if not line then break end
       local tokens = line:split('\t') -- tab separated
       -- which command?
       local cmd = tokens[1]
       if cmd == 'predict' then
-         lmc_predict(tokens)
+         lmc_predict(tokens, model, states)
       elseif cmd == 'rank' then
          lmc_rank(tokens)
       elseif cmd == 'eval' then
@@ -457,8 +456,9 @@ if opt.lmc then
 else
    -- is there context?
    local model, states = init_model(checkpoint)
-   if opt.primetext ~= '' then seed(opt.primetext, model, states) end
-
+   if opt.primetext ~= '' then
+      model, states = seed(opt.primetext, model, states)
+   end
    local predictions = predict_words(model, states)
    for word, prob in tblx.sortv(predictions, desord) do
       print(string.format('%.6f\t%s', prob, word))
