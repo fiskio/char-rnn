@@ -54,8 +54,12 @@ local surround = function(str)
    return '*'..str..'*'
 end
 
+local stderr = function(str)
+   io.stderr:write(str..'\n')
+end
+
 if opt.gpuid >= 0 then
-    print('using CUDA on GPU ' .. opt.gpuid .. '...')
+    stderr('using CUDA on GPU ' .. opt.gpuid .. '...')
     require 'cutorch'
     require 'cunn'
     cutorch.setDevice(opt.gpuid + 1) -- note +1 to make it 0 indexed! sigh lua
@@ -77,7 +81,7 @@ if opt.vocab ~= '' then
       local word = line:split('%s+')[2]
       if word then vocab_filter[word] = true end
    end
-   print('#vocab_filter:', tblx.size(vocab_filter))
+   stderr('#vocab_filter:', tblx.size(vocab_filter))
    -- create prefix filter
    for w,_ in pairs(vocab_filter) do
       for i=1,#w-1 do
@@ -85,7 +89,7 @@ if opt.vocab ~= '' then
          if pfx then prefix_filter[pfx] = true end
       end
    end
-   print('#prefix_filter:', tblx.size(prefix_filter))
+   stderr('#prefix_filter:', tblx.size(prefix_filter))
 end
 
 local vocab = checkpoint.vocab
@@ -100,7 +104,7 @@ opt.rnn_size = protos.softmax.modules[rnn_idx].weight:size(2)
 local states, state_predict_index
 local model = checkpoint.opt.model
 
-print('creating a '..model:upper()..'...')
+stderr('creating a '..model:upper()..'...')
 local num_layers = checkpoint.opt.num_layers or 1 -- or 1 is for backward compatibility
 states = {}
 for L=1,checkpoint.opt.num_layers do
@@ -119,7 +123,7 @@ local prev_char
 protos.rnn:evaluate() -- put in eval mode so that dropout works properly
 
 -- do a few seeded timesteps
-print('seeding with: ' .. seed_text..'\n')
+stderr('seeding with: ' .. seed_text..'\n')
 for c in seed_text:gmatch'.' do
     prev_char = torch.Tensor{vocab[c]}
     if opt.gpuid >= 0 then prev_char = prev_char:cuda() end
@@ -373,7 +377,7 @@ for word, prob in tblx.sortv(topN, desord) do
    print(string.format('%.6f\t%s', prob, word))
 end
 
-print(string.format('\nTotal Time: %.f ms', total_time*1000))
+stderr(string.format('\nTotal Time: %.f ms', total_time*1000))
 
 if opt.verbose then
    -- Also print second best
