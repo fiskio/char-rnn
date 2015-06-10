@@ -28,7 +28,7 @@ cmd:text('Options')
 cmd:argument('-model','model checkpoint to use for sampling')
 -- optional parameters
 cmd:option('-seed',123,'random number generator\'s seed')
-cmd:option('-primetext'," ",'used as a prompt to "seed" the state of the LSTM using a given sequence, before we sample.')
+cmd:option('-primetext',"",'used as a prompt to "seed" the state of the LSTM using a given sequence, before we sample.')
 cmd:option('-temperature',1,'temperature of sampling')
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
 cmd:option('-vocab','','vocabulary whitelist filter')
@@ -97,36 +97,38 @@ local vocab = checkpoint.vocab
 local ivocab = {}
 for c,i in pairs(vocab) do ivocab[i] = c end
 
-protos = checkpoint.protos
-local rnn_idx = #protos.softmax.modules - 1
-opt.rnn_size = protos.softmax.modules[rnn_idx].weight:size(2)
+function init_model(checkpoint)
+   protos = checkpoint.protos
+   local rnn_idx = #protos.softmax.modules - 1
+   opt.rnn_size = protos.softmax.modules[rnn_idx].weight:size(2)
 
--- initialize the rnn state
-local states, state_predict_index
-local model = checkpoint.opt.model
+   -- initialize the rnn state
+   local states, state_predict_index
+   local model = checkpoint.opt.model
 
-stderr('creating a '..model:upper()..'...')
-local num_layers = checkpoint.opt.num_layers or 1 -- or 1 is for backward compatibility
-states = {}
-for L=1,checkpoint.opt.num_layers do
-    -- c and h for all layers
-    local h_init = torch.zeros(1, opt.rnn_size)
-    if opt.gpuid >= 0 then h_init = h_init:cuda() end
-    table.insert(states, h_init:clone())
-    if model == 'lstm' then
-       table.insert(states, h_init:clone())
-    end
+   stderr('creating a '..model:upper()..'...')
+   local num_layers = checkpoint.opt.num_layers or 1 -- or 1 is for backward compatibility
+   states = {}
+   for L=1,checkpoint.opt.num_layers do
+      -- c and h for all layers
+      local h_init = torch.zeros(1, opt.rnn_size)
+      if opt.gpuid >= 0 then h_init = h_init:cuda() end
+      table.insert(states, h_init:clone())
+      if model == 'lstm' then
+         table.insert(states, h_init:clone())
+      end
+   end
+
+   state_predict_index = #states -- last one is the top h
+   local prev_char
+
+   protos.rnn:evaluate() -- put in eval mode so that dropout works properly
+   return protos, states
 end
 
-state_predict_index = #states -- last one is the top h
-local prev_char
-
-protos.rnn:evaluate() -- put in eval mode so that dropout works properly
-
 -- do a few seeded timesteps
-function seed(str, model)
-   local init_state = get_init_state()
-   stderr('seeding with: '..sys.COLORS.green..str..'\027[00m ')
+function seed(seed_text, model, states)
+   stderr('seeding with: '..sys.COLORS.green..seed_text..'\027[00m ')
    for c in seed_text:gmatch'.' do
       prev_char = torch.Tensor{vocab[c]}
       if opt.gpuid >= 0 then prev_char = prev_char:cuda() end
@@ -164,14 +166,14 @@ end
 -- @states    table of tensors, each row is a current partial words
 -- @probs     array of probabilities for each row of prefixes tensors
 -- @contexts  array of partial words for each row of prefixes tensors
-local function branch_next(states, prefixes, probs, n_best)
+local function branch_next(model, states, prefixes, probs, n_best)
    prefixes = prefixes or {''}
    probs = probs or {0}
    dprint(states)
    -- softmax from previous timestep
    local next_h = states[#states]
    next_h = next_h / opt.temperature
-   local log_probs = protos.softmax:forward(next_h)
+   local log_probs = model.softmax:forward(next_h)
 
    -- get n_best possible expansions
    dprint(log_probs:size())
@@ -183,7 +185,7 @@ local function branch_next(states, prefixes, probs, n_best)
       print(opt.min_branch, n_branches, converage, n_best)
    end
 
- sorted_probs = sorted_probs:narrow(2, 1, n_best)
+   sorted_probs = sorted_probs:narrow(2, 1, n_best)
    sorted_ids = sorted_ids:narrow(2, 1, n_best)
    dprint(sorted_probs:size(), sorted_ids:size())
 
@@ -209,13 +211,13 @@ local function branch_next(states, prefixes, probs, n_best)
    -- forward the rnn for new states
    local foo = sorted_ids:reshape(sorted_ids:nElement())
    dprint(foo)
-   local embedding = protos.embed:forward(foo)
+   local embedding = model.embed:forward(foo)
 
    -- forward the network for the next iteration
    for i,state in ipairs(states) do
       states[i] = expandStates(state, n_best)
    end
-   local new_states = protos.rnn:forward{embedding, unpack(states)}
+   local new_states = model.rnn:forward{embedding, unpack(states)}
    if type(new_states) ~= 'table' then new_states = {new_states} end
 
    return new_states, new_prefixes, new_probs
@@ -336,7 +338,7 @@ function normalise(wordToProb)
    return wordToProb
 end
 
-function predict_words()
+function predict_words(model, states)
 
 local words, word_probs = {}, {}
 local prefixes, prob, wordToProb
@@ -345,7 +347,7 @@ local t1 = torch.Timer()
 -- forward a few times
 for i=1, opt.depth do
    -- explore a new character expansion
-   states, prefixes, probs = branch_next(states, prefixes, probs, opt.min_branch)
+   states, prefixes, probs = branch_next(model, states, prefixes, probs, opt.min_branch)
    -- filter bogous sub-words
    states, prefixes, probs = prune_by_prefix(states, prefixes, probs)
    -- keep only the best ones
@@ -405,6 +407,8 @@ end
 function lmc_predict(tokens)
    assert(#tokens == 2)
    local context = tokens[2]
+   local model, states = init_model(checkpoint)
+   if opt.primetext ~= '' then seed(opt.primetext, model, states) end
    seed(context, protos)
    local predictions = predict_words()
    local output = ''
@@ -452,9 +456,10 @@ if opt.lmc then
    lmc_mode()
 else
    -- is there context?
-   if opt.primetext ~= '' then seed(opt.primetext, protos) end
+   local model, states = init_model(checkpoint)
+   if opt.primetext ~= '' then seed(opt.primetext, model, states) end
 
-   local predictions = predict_words()
+   local predictions = predict_words(model, states)
    for word, prob in tblx.sortv(predictions, desord) do
       print(string.format('%.6f\t%s', prob, word))
    end
