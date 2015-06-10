@@ -69,7 +69,7 @@ torch.manualSeed(opt.seed)
 
 -- load the model checkpoint
 if not lfs.attributes(opt.model, 'mode') then
-    print('Error: File ' .. opt.model .. ' does not exist. Are you sure you didn\'t forget to prepend cv/ ?') 
+    print('Error: File ' .. opt.model .. ' does not exist. Are you sure you didn\'t forget to prepend cv/ ?')
 end
 checkpoint = torch.load(opt.model)
 
@@ -99,7 +99,7 @@ local ivocab = {}
 for c,i in pairs(vocab) do ivocab[i] = c end
 
 function init_model(checkpoint)
-   checkpoint = torch.load(opt.model)
+   --checkpoint = torch.load(opt.model)
    protos = checkpoint.protos
    local rnn_idx = #protos.softmax.modules - 1
    opt.rnn_size = protos.softmax.modules[rnn_idx].weight:size(2)
@@ -404,9 +404,10 @@ function predict_words(model, states)
    return topN
 end
 
-function lmc_predict(tokens, model, states)
+function lmc_predict(tokens)
    assert(#tokens == 2)
    local context = tokens[2]
+   local model, states = init_model(checkpoint)
    model, states = seed(context, model, states)
    local predictions = predict_words(model, states)
    local output = ''
@@ -416,8 +417,29 @@ function lmc_predict(tokens, model, states)
    print(output)
 end
 
+function score_word(model, states, word)
+   local score = 0
+   for c in word:gmatch'.' do
+      -- score softmax
+      -- TODO
+   end
+   return score
+end
+
 function lmc_rank(tokens)
-   error('unimplemented')
+   local context = tokens[2]
+   local wordToProb = {}
+   for i=3,#tokens do
+      local model, states = init_model(checkpoint)
+      model, states = seed(context, model, states)
+      local word = tokens[i]
+      wordToProb[word] = score_word(model, states, word)
+   end
+   local output = ''
+   for word, prob in tblx.sortv(wordToProb, desord) do
+      output = output..word..'\t'
+   end
+   print(output)
 end
 
 function lmc_eval(tokens)
@@ -430,14 +452,13 @@ end
 
 function lmc_mode()
    while true do
-   local model, states = init_model(checkpoint)
       local line = io.read('*line')
       if not line then break end
       local tokens = line:split('\t') -- tab separated
       -- which command?
       local cmd = tokens[1]
       if cmd == 'predict' then
-         lmc_predict(tokens, model, states)
+         lmc_predict(tokens)
       elseif cmd == 'rank' then
          lmc_rank(tokens)
       elseif cmd == 'eval' then
