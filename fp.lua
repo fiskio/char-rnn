@@ -41,6 +41,7 @@ cmd:option('-n',10,'number of ranked word candidates to return')
 
 cmd:option('-verbose',false,'print excessive statistics')
 cmd:option('-debug',false,'print excessive debug')
+cmd:option('-lmc',false,'accepts LMChallenge MK-Ultra commands')
 cmd:text()
 
 -- parse input params
@@ -116,24 +117,25 @@ for L=1,checkpoint.opt.num_layers do
        table.insert(states, h_init:clone())
     end
 end
+
 state_predict_index = #states -- last one is the top h
-local seed_text = opt.primetext
 local prev_char
 
 protos.rnn:evaluate() -- put in eval mode so that dropout works properly
 
 -- do a few seeded timesteps
-stderr('seeding with: ' .. seed_text..'\n')
-for c in seed_text:gmatch'.' do
-    prev_char = torch.Tensor{vocab[c]}
-    if opt.gpuid >= 0 then prev_char = prev_char:cuda() end
-    local embedding = protos.embed:forward(prev_char)
-    states = protos.rnn:forward{embedding, unpack(states)}
-    if type(states) ~= 'table' then states = {states} end
+function seed(str, model)
+   local init_state = get_init_state()
+   stderr('seeding with: '..sys.COLORS.green..str..'\027[00m ')
+   for c in seed_text:gmatch'.' do
+      prev_char = torch.Tensor{vocab[c]}
+      if opt.gpuid >= 0 then prev_char = prev_char:cuda() end
+      local embedding = model.embed:forward(prev_char)
+      states = model.rnn:forward{embedding, unpack(states)}
+      if type(states) ~= 'table' then states = {states} end
+   end
+   return model, states
 end
-
-local hit, miss, wtot = 0, 0, 0
-local words = {}
 
 function expandStates(state, n)
    local out = torch.Tensor(state:size(1)*n, state:size(2)):typeAs(state)
@@ -334,11 +336,12 @@ function normalise(wordToProb)
    return wordToProb
 end
 
-local words, word_probs = {}, {}
+function predict_words()
 
+local words, word_probs = {}, {}
+local prefixes, prob, wordToProb
 local t1 = torch.Timer()
 
-local prefixes, prob, wordToProb
 -- forward a few times
 for i=1, opt.depth do
    -- explore a new character expansion
@@ -371,12 +374,6 @@ end
 
 local total_time = t1:time().real
 
--- pretty print
-local desord = function(x,y) return x > y end
-for word, prob in tblx.sortv(topN, desord) do
-   print(string.format('%.6f\t%s', prob, word))
-end
-
 stderr(string.format('\nTotal Time: %.f ms', total_time*1000))
 
 if opt.verbose then
@@ -400,5 +397,65 @@ if opt.verbose then
    -- Also print rejected sub-words
    for pfx, count in pairs(rej_prefixes) do
       print(count, sys.COLORS.yellow..pfx)
+   end
+end
+   return topN
+end
+
+function lmc_predict(tokens)
+   assert(#tokens == 2)
+   local context = tokens[2]
+   seed(context, protos)
+   local predictions = predict_words()
+   local output = ''
+   for word, prob in tblx.sortv(predictions, desord) do
+      output = output..word..'\t'
+   end
+   print(output)
+end
+
+function lmc_rank(tokens)
+   error('unimplemented')
+end
+
+function lmc_eval(tokens)
+   error('unimplemented')
+end
+
+function lmc_train()
+   -- noop
+end
+
+function lmc_mode()
+   while true do
+      local line = io.read('*line')
+      if not line then break end
+      local tokens = line:split('\t') -- tab separated
+      -- which command?
+      local cmd = tokens[1]
+      if cmd == 'predict' then
+         lmc_predict(tokens)
+      elseif cmd == 'rank' then
+         lmc_rank(tokens)
+      elseif cmd == 'eval' then
+         lmc_eval(tokens)
+      elseif cmd == 'train' then
+         lmc_train()
+      else
+         error('Unrecognised LMC command: '..cmd)
+      end
+   end
+end
+
+--[[ MAIN ]]--
+if opt.lmc then
+   lmc_mode()
+else
+   -- is there context?
+   if opt.primetext ~= '' then seed(opt.primetext, protos) end
+
+   local predictions = predict_words()
+   for word, prob in tblx.sortv(predictions, desord) do
+      print(string.format('%.6f\t%s', prob, word))
    end
 end
