@@ -70,7 +70,7 @@ torch.manualSeed(opt.seed)
 
 -- load the model checkpoint
 if not lfs.attributes(opt.model, 'mode') then
-    print('Error: File ' .. opt.model .. ' does not exist. Are you sure you didn\'t forget to prepend cv/ ?')
+    stderr('Error: File ' .. opt.model .. ' does not exist. Are you sure you didn\'t forget to prepend cv/ ?')
 end
 checkpoint = torch.load(opt.model)
 
@@ -132,7 +132,8 @@ function init_model(checkpoint)
    -- initialize the rnn state
    local model = checkpoint.opt.model
 
-   stderr('creating a '..model:upper()..'...')
+   --stderr('creating a '..model:upper()..'...')
+   stderr('resetting '..model:upper()..'...')
    local num_layers = checkpoint.opt.num_layers or 1 -- or 1 is for backward compatibility
    local states = {}
    for L=1,checkpoint.opt.num_layers do
