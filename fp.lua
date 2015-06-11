@@ -363,9 +363,20 @@ function normalise(wordToProb)
    return wordToProb
 end
 
-function predict_words(model, states)
+function extract_partial_word(context)
+   local p_word = ''
+   for i=#context,1,-1 do
+      local c = context:sub(i,i)
+      if c:find('%A') then break end
+      p_word = c .. p_word
+   end
+   print('p_word', surround(p_word))
+   return p_word
+end
+
+function predict_words(context, model, states)
    local words, word_probs = {}, {}
-   local prefixes = {''} -- TODO subword
+   local prefixes = {extract_partial_word(context)}
    local probs = {0}
    local wordToProb = {}
    local t1 = torch.Timer()
@@ -437,7 +448,7 @@ function lmc_predict(tokens)
    local context = tokens[2]
    local model, states = init_model(checkpoint)
    model, states = seed(context, model, states)
-   local predictions = predict_words(model, states)
+   local predictions = predict_words(context, model, states)
    local output = ''
    for word, prob in tblx.sortv(predictions, desord) do
       output = output..word..'\t'
@@ -531,7 +542,7 @@ else
    if opt.primetext ~= '' then
       model, states = seed(opt.primetext, model, states)
    end
-   local predictions = predict_words(model, states)
+   local predictions = predict_words(opt.primetext, model, states)
    for word, prob in tblx.sortv(predictions, desord) do
       print(string.format('%.6f\t%s', prob, word))
    end
