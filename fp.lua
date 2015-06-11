@@ -357,7 +357,7 @@ function merge_words(wordToProb, words, probs)
 end
 
 function normalise(wordToProb)
-   for w, p in ipairs(wordToProb) do
+   for w, p in pairs(wordToProb) do
       wordToProb[w] = p / w:len()
    end
    return wordToProb
