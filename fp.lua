@@ -99,6 +99,30 @@ local vocab = checkpoint.vocab
 local ivocab = {}
 for c,i in pairs(vocab) do ivocab[i] = c end
 
+-- what characters are not letters?
+local non_letter_chars = {}
+local letter_chars = {}
+for i,c in pairs(ivocab) do
+   if c:find('%A') then
+      table.insert(non_letter_chars, c)
+   else
+      table.insert(letter_chars, c)
+   end
+end
+if opt.verbose then
+   print('non_letter_chars: '..#non_letter_chars..' out of '..#ivocab)
+   for i,c in ipairs(non_letter_chars) do
+      print(i, surround(c))
+   end
+   print('')
+   print('letter_chars: '..#letter_chars..' out of '..#ivocab)
+   for i,c in ipairs(letter_chars) do
+      print(i, surround(c))
+   end
+   print('')
+end
+
+
 function init_model(checkpoint)
    --checkpoint = torch.load(opt.model)
    protos = checkpoint.protos
@@ -421,12 +445,35 @@ function lmc_predict(tokens)
 end
 
 function score_word(model, states, word)
-   local score = 0
+   local w_score = 0
    for c in word:gmatch'.' do
       -- score softmax
-      -- TODO
+      local next_h = states[#states]
+      next_h = next_h / opt.temperature
+      local log_probs = model.softmax:forward(next_h)
+      -- add probability of current character
+      local char_id = vocab[c]
+      w_score = w_score + log_probs[1][char_id]
+      -- forward the network
+      local embedding = model.embed:forward(torch.Tensor{char_id})
+      states = model.rnn:forward{embedding, unpack(states)}
+      if type(new_states) ~= 'table' then new_states = {new_states} end
    end
-   return score
+   w_score = math.exp(w_score)
+   -- add score for terminating chars
+   local next_h = states[#states]
+   next_h = next_h / opt.temperature
+   local log_probs = model.softmax:forward(next_h)
+   local nlc_score = 0
+   for i,c in ipairs(non_letter_chars) do
+      nlc_score = math.exp(nlc_score + log_probs[1][i])
+   end
+   local w_score = w_score + nlc_score
+   if opt.normalise then
+      local p_map = normalise({[word] = score})
+      w_score = p_map[word]
+   end
+   return w_score
 end
 
 function lmc_rank(tokens)
