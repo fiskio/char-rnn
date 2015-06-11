@@ -417,25 +417,28 @@ function predict_words(context, model, states)
 
    stderr(string.format('\nTotal Time: %.f ms', total_time*1000))
 
+   -- STATS
    if opt.verbose then
       -- Also print second best
-      print('')
+      print('\nWords found, but not in topK -- i.e. second best')
       for word, prob in tblx.sortv(rest, desord) do
          print(string.format('%.6f\t%s', prob, word))
       end
 
       -- Also print current unfinished partial words
-      print('')
+      print('\nPartial words still to explore')
       for i, pfx in ipairs(prefixes) do
          print(string.format('%.6f\t%s', math.exp(probs[i]), pfx..'..'))
       end
 
       -- Also print rejected words
+      print('\nRejected words')
       for word, count in pairs(rej_words) do
          print(count, sys.COLORS.red..word)
       end
 
       -- Also print rejected sub-words
+      print('\nRejected sub-words')
       for pfx, count in pairs(rej_prefixes) do
          print(count, sys.COLORS.yellow..pfx)
       end
