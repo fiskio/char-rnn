@@ -39,6 +39,7 @@ cmd:option('-queue_size',20,'maximum number of elements in the queue at each ste
 cmd:option('-depth',10,'maximum length of any predicted words')
 cmd:option('-n',10,'number of ranked word candidates to return')
 
+cmd:option('-normalise',false,'divide the word score by its length')
 cmd:option('-verbose',false,'print excessive statistics')
 cmd:option('-debug',false,'print excessive debug')
 cmd:option('-lmc',false,'accepts LMChallenge MK-Ultra commands')
@@ -361,7 +362,9 @@ function predict_words(model, states)
    end
 
    -- normalise probabilities by word length
-   wordToProb = normalise(wordToProb)
+   if opt.normalise then
+      wordToProb = normalise(wordToProb)
+   end
 
    local topN, rest = {}, {}
    local size = 0
