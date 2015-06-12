@@ -173,16 +173,10 @@ end
 --      B      A
 --             B
 --             B
-function expandTensor(state, n)
-   local out = torch.Tensor(state:size(1)*n, state:size(2)):typeAs(state)
-   local idx = 1
-   for i=1,state:size(1) do
-      for j=1,n do
-         out[{{idx},{}}] = state[i]
-         idx = idx + 1
-      end
-   end
-   return out
+function expand_tensor(tensor, n)
+   local r = tensor:size(1) * n
+   local c = tensor:size(2)
+   return tensor:repeatTensor(1, n):reshape(r, c)
 end
 
 -- find the minimum number of columns to consider in a sorted
@@ -243,7 +237,8 @@ local function branch_next(model, states, softmax, prefixes, probs, n_best)
 
    -- forward the network for the next iteration
    for i,state in ipairs(states) do
-      states[i] = expandTensor(state, n_best)
+      --states[i] = expandTensor(state, n_best)
+      states[i] = expand_tensor(state, n_best)
    end
    -- forward the rnn for next character
    local lst = model.rnn:forward{foo, unpack(states)}
