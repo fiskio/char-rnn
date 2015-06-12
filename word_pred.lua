@@ -28,6 +28,7 @@ cmd:text('Options')
 cmd:argument('-model','model checkpoint to use for sampling')
 -- optional parameters
 cmd:option('-seed',123,'random number generator\'s seed')
+cmd:option('-pad','\n','padding text to be added on the left of primetext')
 cmd:option('-primetext',"",'used as a prompt to "seed" the state of the LSTM using a given sequence, before we sample.')
 cmd:option('-temperature',1,'temperature of sampling')
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
@@ -150,6 +151,8 @@ end
 
 -- seed model with given text characters
 function seed(seed_text, model, states)
+   -- left padding?
+   if opt.pad ~= '' then seed_text = seed_text..opt.pad end
    stderr('seeding with: '..sys.COLORS.green..seed_text..'\027[00m ')
    local softmax
    for c in seed_text:gmatch'.' do
@@ -254,7 +257,7 @@ end
 -- removes all non-acceptable partial words
 local function prune_by_prefix(states, softmax, prefixes, probs)
    if opt.vocab == '' then
-      return states, prefixes, probs
+      return states, softmax, prefixes, probs
    end
    local new_prefixes, new_probs, keep_states = {}, {}, {}
    -- is it an allowed prefix?
