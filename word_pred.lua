@@ -1,5 +1,5 @@
 --[[
-
+-
 This file samples characters from a trained model
 
 Code is based on implementation in
@@ -471,9 +471,10 @@ function lmc_predict(tokens)
    local softmax
    model, states, softmax = seed(context, model, states)
    local predictions = predict_words(context, model, states, softmax)
+   local skip_chars = 1+#(extract_partial_word(context))
    local output = ''
    for word, prob in tblx.sortv(predictions, desord) do
-      output = output..word..'\t'
+      output = output..word:sub(skip_chars)..'\t'
    end
    io.write(output..'\n')
    io.flush()
