@@ -17,6 +17,7 @@ require 'util.OneHot'
 require 'util.misc'
 
 local tblx = require 'pl.tablex'
+local strx = require 'pl.stringx'
 local desord = function(x,y) return x > y end
 
 cmd = torch.CmdLine()
@@ -28,7 +29,7 @@ cmd:text('Options')
 cmd:argument('-model','model checkpoint to use for sampling')
 -- optional parameters
 cmd:option('-seed',123,'random number generator\'s seed')
-cmd:option('-pad','\n','padding text to be added on the left of primetext')
+cmd:option('-pad','\n⇶⇉→❀','padding text to be added on the left of primetext')
 cmd:option('-primetext',"",'used as a prompt to "seed" the state of the LSTM using a given sequence, before we sample.')
 cmd:option('-temperature',1,'temperature of sampling')
 cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
@@ -152,7 +153,7 @@ end
 -- seed model with given text characters
 function seed(seed_text, model, states)
    -- left padding?
-   if opt.pad ~= '' then seed_text = seed_text..opt.pad end
+   if opt.pad ~= '' then seed_text = opt.pad..seed_text end
    stderr('seeding with: '..sys.COLORS.green..seed_text..'\027[00m ')
    local softmax
    for c in seed_text:gmatch'.' do
@@ -379,7 +380,7 @@ function extract_partial_word(context)
       if c:find('%A') then break end
       p_word = c .. p_word
    end
-   print('p_word', surround(p_word))
+   stderr('partial_word: ', surround(p_word))
    return p_word
 end
 
@@ -443,7 +444,7 @@ function print_stats(rest, prefixes)
    -- Also print current unfinished partial words
    print('\nPartial words still to explore')
    for i, pfx in ipairs(prefixes) do
-      print(string.format('%.6f\t%s', math.exp(probs[i]), pfx..'..'))
+      print(string.format('%s', pfx..'..'))
    end
 
    -- Also print rejected words
@@ -464,6 +465,7 @@ end
 -- predict the next most likely words
 function lmc_predict(tokens)
    assert(#tokens == 2)
+   collectgarbage()
    local context = tokens[2]
    local model, states = init_model(checkpoint)
    local softmax
@@ -473,7 +475,8 @@ function lmc_predict(tokens)
    for word, prob in tblx.sortv(predictions, desord) do
       output = output..word..'\t'
    end
-   print(output)
+   io.write(output..'\n')
+   io.flush()
 end
 
 -- give a likelihood score for a given word
@@ -541,7 +544,7 @@ if opt.lmc then
    while true do
       local line = io.read('*line')
       if not line then break end
-      local tokens = line:split('\t') -- tab separated
+      local tokens = strx.split(line, '\t') -- tab separated
       -- which command?
       local cmd = tokens[1]
       if cmd == 'predict' then
