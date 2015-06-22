@@ -127,15 +127,16 @@ if opt.verbose then
 end
 
 --[[ Functions ]]--
-
+local zero_states, zero_model
 -- reset the state of a given model
 function init_model(checkpoint)
    --checkpoint = torch.load(opt.model)
+   if zero_model and zero_states then return zero_model, zero_states end
    local protos = checkpoint.protos
 
    local model = checkpoint.opt.model
    stderr('resetting '..model:upper()..'...')
-   local num_layers = checkpoint.opt.num_layers or 1 -- or 1 is for backward compatibility
+   local num_layers = checkpoint.opt.num_layers or 1 -- or 1 is for backward compatibilit
    local states = {}
    for L=1,checkpoint.opt.num_layers do
       -- c and h for all layers
@@ -147,6 +148,8 @@ function init_model(checkpoint)
       end
    end
    protos.rnn:evaluate() -- put in eval mode so that dropout works properly
+   zero_model = protos
+   zero_states = states
    return protos, states
 end
 
@@ -310,6 +313,14 @@ local function prune_bestOverAll(states, softmax, prefixes, probs, n_best)
    return states, softmax, best_prefixes, best_probs
 end
 
+function isTerminalChar(c)
+   local allowedChars = {
+      ["-"] = true,
+      ["'"] = true
+   }
+   return c:find('%A') and not allowedChars[c]
+end
+
 -- removes all complete words
 function extract_words(words, word_probs, states, softmax, prefixes, probs)
    local word_ids = {}
@@ -317,7 +328,8 @@ function extract_words(words, word_probs, states, softmax, prefixes, probs)
    -- is last charachter a stop?
    for i,pfx in ipairs(prefixes) do
       local last_char = pfx:sub(#pfx)
-      if last_char:find('%A') then
+      --if last_char:find('%A') then
+      if isTerminalChar(last_char) then
          -- check if it is an allowed word
          local word = pfx:sub(1, #pfx-1)
          if opt.vocab == '' or vocab_filter[word] then
@@ -352,15 +364,18 @@ end
 -- aggregate the probability of multiple word+stop
 -- i.e. 'am' = 'am ' + .. + 'am,'
 function merge_words(wordToProb, words, probs)
-   wordToProb = wordToProb or {}
+   --if opt.lmc then return wordToProb end
+   --print(wordToProb)
    words = words or {}
    for i, word in ipairs(words) do
       local last_char = word:sub(#word)
       local actual_word = word:sub(1,#word-1)
       local curr_prob = wordToProb[actual_word] or 0
       curr_prob = curr_prob + math.exp(probs[i])
+      --if actual_word == '' then print(surround(word), curr_prob) end
       wordToProb[actual_word] = curr_prob
    end
+   --print(wordToProb)
    return wordToProb
 end
 
@@ -405,6 +420,7 @@ function predict_words(context, model, states, softmax)
       -- merge probabilities
       wordToProb = merge_words(wordToProb, words, word_probs)
       -- shall we stop?
+      collectgarbage()
       if #prefixes == 0 then break end
    end
 
