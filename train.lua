@@ -38,10 +38,19 @@ cmd:option('-rnn_size', 128, 'size of LSTM internal state')
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'for now only lstm is supported. keep fixed')
 -- optimization
+cmd:option('-optim', 'rmsprop', 'Optimisation algorithm')
 cmd:option('-learning_rate',2e-3,'learning rate')
 cmd:option('-learning_rate_decay',0.97,'learning rate decay')
 cmd:option('-learning_rate_decay_after',10,'in number of epochs, when to start decaying the learning rate')
-cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
+cmd:option('-sgd_weight_decay', 0, 'weight decay')
+cmd:option('-sgd_momentum', 0, 'momentum')
+cmd:option('-sgd_momentum_nesterov', false, 'use nesterov momentum ')
+cmd:option('-rmsprop_alpha', 0.99,'smoothing constant')
+cmd:option('-rmsprop_epsilon', 1e-8, 'value with which to inistialise m')
+cmd:option('-adam_beta1', 0.9, 'first moment coefficient')
+cmd:option('-adam_beta2', 0.999, 'second moment coefficient')
+cmd:option('-adam_lambda', 1-1e-8, 'first moment decay')
+cmd:option('-adadelta_rho', 0.9, 'interpolation parameter')
 cmd:option('-dropout',0,'dropout to use just before classifier. 0 = no dropout')
 cmd:option('-seq_length',50,'number of timesteps to unroll for')
 cmd:option('-batch_size',50,'number of sequences to train on in parallel')
@@ -198,7 +207,29 @@ end
 -- start optimization here
 train_losses = {}
 val_losses = {}
-local optim_state = {learningRate = opt.learning_rate, alpha = opt.decay_rate}
+
+local optim_states = {
+   rmsprop  = { learningRate = opt.learning_rate,
+                alpha        = opt.rmsprop_alpha,
+                epsilon      = opt.rmsprop_epsilon },
+   adagrad  = { learningRate      = opt.learning_rate,
+                learningRateDecay = opt.learning_rate_decay },
+   adam     = { beta1  = opt.adam_beta1,
+                beta2  = opt.adam_beta2,
+                lambda = opt.adam_lambda },
+   adadelta = { rho = opt.adadelta_rho },
+   sgd      = { learningRate      = opt.learning_rate,
+                learningRateDecay = opt.learning_rate_decay,
+                weightDecay       = opt.sgd_weight_decay,
+                momentum          = opt.sgd_momentum,
+                nesterov          = opt.sgd_momentum_nesterov,
+                dampening         = opt.sgd_momentum_nesterov and 0 or opt.sgd_momentum }
+}
+
+local optim_state = optim_states[opt.optim] or error('Unrecognised optim algorithm:'..opt.optim)
+local optim_algo = optim[opt.optim]
+print(opt.optim, optim_state)
+
 local iterations = opt.max_epochs * loader.ntrain
 local iterations_per_epoch = loader.ntrain
 local loss0 = nil
@@ -206,7 +237,7 @@ for i = 1, iterations do
     local epoch = i / loader.ntrain
 
     local timer = torch.Timer()
-    local _, loss = optim.rmsprop(feval, params, optim_state)
+    local _, loss = optim_algo(feval, params, optim_state)
     local time = timer:time().real
 
     local train_loss = loss[1] -- the loss is inside a list, pop it
@@ -244,7 +275,7 @@ for i = 1, iterations do
     if i % opt.print_every == 0 then
         print(string.format("%d/%d (epoch %.3f), train_loss = %6.8f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_loss, grad_params:norm() / params:norm(), time))
     end
-   
+
     if i % 10 == 0 then collectgarbage() end
 
     -- handle early stopping if things are going really bad
