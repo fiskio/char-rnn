@@ -3,11 +3,11 @@
 
 This file trains a character-level multi-layer RNN on text data
 
-Code is based on implementation in 
+Code is based on implementation in
 https://github.com/oxford-cs-ml-2015/practical6
 but modified to have multi-layer support, GPU support, as well as
 many other common model/optimization bells and whistles.
-The practical6 code is in turn based on 
+The practical6 code is in turn based on
 https://github.com/wojciechz/learning_to_execute
 which is turn based on other stuff in Torch, etc... (long lineage)
 
@@ -18,6 +18,7 @@ require 'nn'
 require 'nngraph'
 require 'optim'
 require 'lfs'
+require 'autobw'
 
 require 'util.OneHot'
 require 'util.misc'
@@ -39,11 +40,20 @@ cmd:option('-rnn_size', 128, 'size of LSTM internal state')
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm,gru or rnn')
 -- optimization
+cmd:option('-optim', 'rmsprop', 'Optimisation algorithm')
 cmd:option('-learning_rate',2e-3,'learning rate')
 cmd:option('-learning_rate_decay',0.97,'learning rate decay')
 cmd:option('-learning_rate_decay_after',10,'in number of epochs, when to start decaying the learning rate')
-cmd:option('-decay_rate',0.95,'decay rate for rmsprop')
 cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
+cmd:option('-sgd_weight_decay', 0, 'weight decay')
+cmd:option('-sgd_momentum', 0, 'momentum')
+cmd:option('-sgd_momentum_nesterov', false, 'use nesterov momentum ')
+cmd:option('-rmsprop_alpha', 0.99,'smoothing constant')
+cmd:option('-rmsprop_epsilon', 1e-8, 'value with which to inistialise m')
+cmd:option('-adam_beta1', 0.9, 'first moment coefficient')
+cmd:option('-adam_beta2', 0.999, 'second moment coefficient')
+cmd:option('-adam_lambda', 1-1e-8, 'first moment decay')
+cmd:option('-adadelta_rho', 0.9, 'interpolation parameter')
 cmd:option('-seq_length',50,'number of timesteps to unroll for')
 cmd:option('-batch_size',50,'number of sequences to train on in parallel')
 cmd:option('-max_epochs',50,'number of full passes through the training data')
@@ -68,7 +78,7 @@ opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
 -- train / val / test split for data, in fractions
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
-local split_sizes = {opt.train_frac, opt.val_frac, test_frac} 
+local split_sizes = {opt.train_frac, opt.val_frac, test_frac}
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 if opt.gpuid >= 0 and opt.opencl == 0 then
@@ -122,8 +132,8 @@ if string.len(opt.init_from) > 0 then
     protos = checkpoint.protos
     -- make sure the vocabs are the same
     local vocab_compatible = true
-    for c,i in pairs(checkpoint.vocab) do 
-        if not vocab[c] == i then 
+    for c,i in pairs(checkpoint.vocab) do
+        if not vocab[c] == i then
             vocab_compatible = false
         end
     end
@@ -191,7 +201,7 @@ function eval_split(split_index, max_batches)
     loader:reset_batch_pointer(split_index) -- move batch iteration pointer for this split to front
     local loss = 0
     local rnn_state = {[0] = init_state}
-    
+
     for i = 1,n do -- iterate over batches in the split
         -- fetch a batch
         local x, y = loader:next_batch(split_index)
@@ -210,7 +220,7 @@ function eval_split(split_index, max_batches)
             local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
             rnn_state[t] = {}
             for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end
-            prediction = lst[#lst] 
+            prediction = lst[#lst]
             loss = loss + clones.criterion[t]:forward(prediction, y[{{}, t}])
         end
         -- carry over lstm state
@@ -241,7 +251,12 @@ function feval(x)
         x = x:cl()
         y = y:cl()
     end
+
+    local tape = autobw.Tape()
+
     ------------------- forward pass -------------------
+    tape:begin()
+
     local rnn_state = {[0] = init_state_global}
     local predictions = {}           -- softmax outputs
     local loss = 0
@@ -254,23 +269,10 @@ function feval(x)
         loss = loss + clones.criterion[t]:forward(predictions[t], y[{{}, t}])
     end
     loss = loss / opt.seq_length
+
+    tape:stop()
     ------------------ backward pass -------------------
-    -- initialize gradient at time t to be zeros (there's no influence from future)
-    local drnn_state = {[opt.seq_length] = clone_list(init_state, true)} -- true also zeros the clones
-    for t=opt.seq_length,1,-1 do
-        -- backprop through loss, and softmax/linear
-        local doutput_t = clones.criterion[t]:backward(predictions[t], y[{{}, t}])
-        table.insert(drnn_state[t], doutput_t)
-        local dlst = clones.rnn[t]:backward({x[{{}, t}], unpack(rnn_state[t-1])}, drnn_state[t])
-        drnn_state[t-1] = {}
-        for k,v in pairs(dlst) do
-            if k > 1 then -- k == 1 is gradient on x, which we dont need
-                -- note we do k-1 because first item is dembeddings, and then follow the 
-                -- derivatives of the state, starting at index 2. I know...
-                drnn_state[t-1][k-1] = v
-            end
-        end
-    end
+    tape:backward()
     ------------------------ misc ----------------------
     -- transfer final state to initial state (BPTT)
     init_state_global = rnn_state[#rnn_state] -- NOTE: I don't think this needs to be a clone, right?
@@ -282,7 +284,29 @@ end
 -- start optimization here
 train_losses = {}
 val_losses = {}
-local optim_state = {learningRate = opt.learning_rate, alpha = opt.decay_rate}
+
+local optim_states = {
+   rmsprop  = { learningRate = opt.learning_rate,
+                alpha        = opt.rmsprop_alpha,
+                epsilon      = opt.rmsprop_epsilon },
+   adagrad  = { learningRate      = opt.learning_rate,
+                learningRateDecay = opt.learning_rate_decay },
+   adam     = { beta1  = opt.adam_beta1,
+                beta2  = opt.adam_beta2,
+                lambda = opt.adam_lambda },
+   adadelta = { rho = opt.adadelta_rho },
+   sgd      = { learningRate      = opt.learning_rate,
+                learningRateDecay = opt.learning_rate_decay,
+                weightDecay       = opt.sgd_weight_decay,
+                momentum          = opt.sgd_momentum,
+                nesterov          = opt.sgd_momentum_nesterov,
+                dampening         = opt.sgd_momentum_nesterov and 0 or opt.sgd_momentum }
+}
+
+local optim_state = optim_states[opt.optim] or error('Unrecognised optim algorithm:'..opt.optim)
+local optim_algo = optim[opt.optim]
+print(opt.optim, optim_state)
+
 local iterations = opt.max_epochs * loader.ntrain
 local iterations_per_epoch = loader.ntrain
 local loss0 = nil
@@ -290,7 +314,7 @@ for i = 1, iterations do
     local epoch = i / loader.ntrain
 
     local timer = torch.Timer()
-    local _, loss = optim.rmsprop(feval, params, optim_state)
+    local _, loss = optim_algo(feval, params, optim_state)
     local time = timer:time().real
 
     local train_loss = loss[1] -- the loss is inside a list, pop it
@@ -328,7 +352,7 @@ for i = 1, iterations do
     if i % opt.print_every == 0 then
         print(string.format("%d/%d (epoch %.3f), train_loss = %6.8f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_loss, grad_params:norm() / params:norm(), time))
     end
-   
+
     if i % 10 == 0 then collectgarbage() end
 
     -- handle early stopping if things are going really bad
