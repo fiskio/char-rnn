@@ -65,10 +65,10 @@ function Text:__init(config)
       self._valid_set = self:load_text(self._valid_file)
       self._test_set  = self:load_text(self._test_file)
       -- initialise batch lists and index
-      self:reset_batch_pointer()
       self._train_batches = self:listify(self._train_set)
       self._valid_batches = self:listify(self._valid_set)
       self._test_batches  = self:listify(self._test_set)
+      self:reset_batch_pointer()
       -- save a copy
       self:save()
    end
@@ -257,16 +257,24 @@ function Text:shuffle(list)
 end
 
 -- restart batch counter
-function Text:reset_batch_pointer()
-   self._batch_index = 1
+function Text:reset_batch_pointer(batch_set)
+   if batch_set then
+      self._batch_index[batch_set] = 1
+   else
+      self._batch_index = {}
+      self._batch_index[self._train_batches] = 1
+      self._batch_index[self._valid_batches] = 1
+      self._batch_index[self._test_batches] = 1
+   end
 end
 
 -- get the next batch from a list
 -- ie: txt:next_batch(txt:test_batches())
 function Text:next_batch(batch_list)
-   self._batch_index = self._batch_index + 1
-   if self._batch_index > #batch_list then self._batch_index = 1 end
-   local x = batch_list[self._batch_index]
+   self._batch_index[batch_list] = self._batch_index[batch_list] + 1
+   if self._batch_index[batch_list] > #batch_list then
+      self._batch_index[batch_list] = 1 end
+   local x = batch_list[self._batch_index[batch_list]]
    local y = torch.Tensor():typeAs(x):resizeAs(x)
    -- shifted copy
    y:sub(1,-1,1,-2):copy(x:sub(1,-1,2,-1))
@@ -351,13 +359,14 @@ function Text:load_cache()
    print('Using compatible cached version: '..path)
 
    -- initialise batch lists and index
-   self:reset_batch_pointer()
    self._vocab_size = cached._vocab_size
    self._train_batches = cached._train_batches
    self._valid_batches = cached._valid_batches
    self._test_batches  = cached._test_batches
    self._word2class = cached._word2class
    self._class2word = cached._class2word
+   self._batch_index = cached._batch_index
+   self:reset_batch_pointer()
    return true
 end
 

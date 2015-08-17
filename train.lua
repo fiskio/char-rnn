@@ -1,4 +1,3 @@
-
 --[[
 
 This file trains a character-level multi-layer RNN on text data
@@ -22,7 +21,8 @@ require 'autobw'
 
 require 'util.OneHot'
 require 'util.misc'
-local CharSplitLMMinibatchLoader = require 'util.CharSplitLMMinibatchLoader'
+--local CharSplitLMMinibatchLoader = require 'util.CharSplitLMMinibatchLoader'
+local text = require 'text'
 local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
 local GRU = require 'model.GRU'
@@ -39,6 +39,7 @@ cmd:option('-data_dir','data/tinyshakespeare','data directory. Should contain th
 cmd:option('-rnn_size', 128, 'size of LSTM internal state')
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm,gru or rnn')
+cmd:option('-embeddings', 64, 'size of word embeddings')
 -- optimization
 cmd:option('-optim', 'rmsprop', 'Optimisation algorithm')
 cmd:option('-learning_rate',2e-3,'learning rate')
@@ -117,9 +118,16 @@ if opt.gpuid >= 0 and opt.opencl == 1 then
 end
 
 -- create the data loader class
-local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes)
-local vocab_size = loader.vocab_size  -- the number of distinct characters
-local vocab = loader.vocab_mapping
+--local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes)
+local loader = Text{
+                  name = 'hc_twitter',
+                  vocab_size = 1e4,
+                  batch_size = opt.batch_size,
+                  max_length = 50,
+                  max_reps = 10
+               }
+local vocab_size = loader._vocab_size  -- the number of distinct characters
+local vocab = loader._word2class
 print('vocab size: ' .. vocab_size)
 -- make sure output directory exists
 if not path.exists(opt.checkpoint_dir) then lfs.mkdir(opt.checkpoint_dir) end
@@ -147,11 +155,11 @@ else
     print('creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
     protos = {}
     if opt.model == 'lstm' then
-        protos.rnn = LSTM.lstm(vocab_size, opt.rnn_size, opt.num_layers, opt.dropout)
+        protos.rnn = LSTM.lstm(vocab_size, opt.rnn_size, opt.num_layers, opt.embeddings, opt.dropout)
     elseif opt.model == 'gru' then
-        protos.rnn = GRU.gru(vocab_size, opt.rnn_size, opt.num_layers, opt.dropout)
+        protos.rnn = GRU.gru(vocab_size, opt.rnn_size, opt.num_layers, opt.embeddings, opt.dropout)
     elseif opt.model == 'rnn' then
-        protos.rnn = RNN.rnn(vocab_size, opt.rnn_size, opt.num_layers, opt.dropout)
+        protos.rnn = RNN.rnn(vocab_size, opt.rnn_size, opt.num_layers, opt.embeddings, opt.dropout)
     end
     protos.criterion = nn.ClassNLLCriterion()
 end
@@ -194,17 +202,17 @@ end
 
 -- evaluate the loss over an entire split
 function eval_split(split_index, max_batches)
-    print('evaluating loss over split index ' .. split_index)
-    local n = loader.split_sizes[split_index]
+    --print('evaluating loss over split index ' .. split_index)
+    local n = #loader._valid_batches
     if max_batches ~= nil then n = math.min(max_batches, n) end
 
-    loader:reset_batch_pointer(split_index) -- move batch iteration pointer for this split to front
+    loader:reset_batch_pointer(loader:valid_batches()) -- move batch iteration pointer for this split to front
     local loss = 0
-    local rnn_state = {[0] = init_state}
+    --local rnn_state
 
     for i = 1,n do -- iterate over batches in the split
         -- fetch a batch
-        local x, y = loader:next_batch(split_index)
+        local x, y = loader:next_batch(loader:valid_batches())
         if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
             -- have to convert to float because integers can't be cuda()'d
             x = x:float():cuda()
@@ -214,8 +222,13 @@ function eval_split(split_index, max_batches)
             x = x:cl()
             y = y:cl()
         end
+        local init_state_local = {}
+        for i,t in ipairs(init_state) do
+           init_state_local[i] = torch.zeros(x:size(1), opt.rnn_size)
+        end
+        local rnn_state = {[0] = init_state_local}
         -- forward pass
-        for t=1,opt.seq_length do
+        for t=1, x:size(2) do
             clones.rnn[t]:evaluate() -- for dropout proper functioning
             local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
             rnn_state[t] = {}
@@ -225,15 +238,17 @@ function eval_split(split_index, max_batches)
         end
         -- carry over lstm state
         rnn_state[0] = rnn_state[#rnn_state]
+        loss = loss / x:size(2)
         print(i .. '/' .. n .. '...')
+        collectgarbage()
     end
 
-    loss = loss / opt.seq_length / n
+    loss = loss / n
     return loss
 end
 
 -- do fwd/bwd and return loss, grad_params
-local init_state_global = clone_list(init_state)
+--local init_state_global = clone_list(init_state)
 function feval(x)
     if x ~= params then
         params:copy(x)
@@ -241,7 +256,7 @@ function feval(x)
     grad_params:zero()
 
     ------------------ get minibatch -------------------
-    local x, y = loader:next_batch(1)
+    local x, y = loader:next_batch(loader._train_batches)
     if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
         -- have to convert to float because integers can't be cuda()'d
         x = x:float():cuda()
@@ -256,11 +271,23 @@ function feval(x)
 
     ------------------- forward pass -------------------
     tape:begin()
+    --[[
+    q = math.floor(math.random(x:size(1))) + 1
+    print(q)
+    x = x:sub(1, q)
+    y = y:sub(1, q)
+    print(x:size(), y:size())
+    print(init_state_global)
+    --]]
+    local init_state_local = {}
+    for i,t in ipairs(init_state) do
+          init_state_local[i] = torch.zeros(x:size(1), opt.rnn_size)
+    end
 
-    local rnn_state = {[0] = init_state_global}
+    local rnn_state = {[0] = init_state_local}
     local predictions = {}           -- softmax outputs
     local loss = 0
-    for t=1,opt.seq_length do
+    for t=1,x:size(2) do
         clones.rnn[t]:training() -- make sure we are in correct mode (this is cheap, sets flag)
         local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
         rnn_state[t] = {}
@@ -268,14 +295,14 @@ function feval(x)
         predictions[t] = lst[#lst] -- last element is the prediction
         loss = loss + clones.criterion[t]:forward(predictions[t], y[{{}, t}])
     end
-    loss = loss / opt.seq_length
+    loss = loss / x:size(2)
 
     tape:stop()
     ------------------ backward pass -------------------
     tape:backward()
     ------------------------ misc ----------------------
     -- transfer final state to initial state (BPTT)
-    init_state_global = rnn_state[#rnn_state] -- NOTE: I don't think this needs to be a clone, right?
+    -- init_state_global = rnn_state[#rnn_state] -- NOTE: I don't think this needs to be a clone, right?
     -- clip gradient element-wise
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
     return loss, grad_params
@@ -307,11 +334,11 @@ local optim_state = optim_states[opt.optim] or error('Unrecognised optim algorit
 local optim_algo = optim[opt.optim]
 print(opt.optim, optim_state)
 
-local iterations = opt.max_epochs * loader.ntrain
+local iterations = opt.max_epochs * #loader._train_batches
 local iterations_per_epoch = loader.ntrain
 local loss0 = nil
 for i = 1, iterations do
-    local epoch = i / loader.ntrain
+    local epoch = i / #loader._train_batches
 
     local timer = torch.Timer()
     local _, loss = optim_algo(feval, params, optim_state)
@@ -321,7 +348,7 @@ for i = 1, iterations do
     train_losses[i] = train_loss
 
     -- exponential learning rate decay
-    if i % loader.ntrain == 0 and opt.learning_rate_decay < 1 then
+    if i % #loader._train_batches == 0 and opt.learning_rate_decay < 1 then
         if epoch >= opt.learning_rate_decay_after then
             local decay_factor = opt.learning_rate_decay
             optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
@@ -332,7 +359,7 @@ for i = 1, iterations do
     -- every now and then or on last iteration
     if i % opt.eval_val_every == 0 or i == iterations then
         -- evaluate loss on validation data
-        local val_loss = eval_split(2) -- 2 = validation
+        local val_loss = eval_split(loader:valid_batches()) -- 2 = validation
         val_losses[i] = val_loss
 
         local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
@@ -345,7 +372,7 @@ for i = 1, iterations do
         checkpoint.val_losses = val_losses
         checkpoint.i = i
         checkpoint.epoch = epoch
-        checkpoint.vocab = loader.vocab_mapping
+        checkpoint.vocab = loader._word2class
         torch.save(savefile, checkpoint)
     end
 

@@ -5,12 +5,12 @@ local GRU = {}
 Creates one timestep of one GRU
 Paper reference: http://arxiv.org/pdf/1412.3555v1.pdf
 ]]--
-function GRU.gru(input_size, rnn_size, n, dropout)
-  dropout = dropout or 0 
+function GRU.gru(input_size, rnn_size, n_layers, embeddings, dropout)
+  dropout = dropout or 0
   -- there are n+1 inputs (hiddens on each layer and x)
   local inputs = {}
   table.insert(inputs, nn.Identity()()) -- x
-  for L = 1,n do
+  for L = 1, n_layers do
     table.insert(inputs, nn.Identity()()) -- prev_h[L]
   end
 
@@ -22,15 +22,15 @@ function GRU.gru(input_size, rnn_size, n, dropout)
 
   local x, input_size_L
   local outputs = {}
-  for L = 1,n do
+  for L = 1, n_layers do
 
     local prev_h = inputs[L+1]
     -- the input to this layer
-    if L == 1 then 
-      x = OneHot(input_size)(inputs[1])
-      input_size_L = input_size
-    else 
-      x = outputs[(L-1)] 
+    if L == 1 then
+      x = nn.LookupTable(input_size, embeddings)(inputs[1])
+      input_size_L = embeddings
+    else
+      x = outputs[(L-1)]
       if dropout > 0 then x = nn.Dropout(dropout)(x) end -- apply dropout, if any
       input_size_L = rnn_size
     end

@@ -1,7 +1,8 @@
 local RNN = {}
 
 function RNN.rnn(input_size, rnn_size, n, dropout)
-  
+
+  local embeddings = 64
   -- there are n+1 inputs (hiddens on each layer and x)
   local inputs = {}
   table.insert(inputs, nn.Identity()()) -- x
@@ -13,13 +14,13 @@ function RNN.rnn(input_size, rnn_size, n, dropout)
   local x, input_size_L
   local outputs = {}
   for L = 1,n do
-    
+
     local prev_h = inputs[L+1]
-    if L == 1 then 
-      x = OneHot(input_size)(inputs[1])
-      input_size_L = input_size
-    else 
-      x = outputs[(L-1)] 
+    if L == 1 then
+      x = nn.LookupTable(input_size, embeddings)(inputs[1])
+      input_size_L = embeddings
+    else
+      x = outputs[(L-1)]
       if dropout > 0 then x = nn.Dropout(dropout)(x) end -- apply dropout, if any
       input_size_L = rnn_size
     end
@@ -27,6 +28,9 @@ function RNN.rnn(input_size, rnn_size, n, dropout)
     -- RNN tick
     local i2h = nn.Linear(input_size_L, rnn_size)(x)
     local h2h = nn.Linear(rnn_size, rnn_size)(prev_h)
+  --  if i2h.data.module.weight:size() ~= h2h.data.module.weight:size() then
+       print(i2h.data.module.weight:size(), h2h.data.module.weight:size())
+    --end
     local next_h = nn.Tanh()(nn.CAddTable(){i2h, h2h})
 
     table.insert(outputs, next_h)
