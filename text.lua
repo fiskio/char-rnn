@@ -380,6 +380,9 @@ function Text:load_cache()
 end
 
 -- [[ getters ]]
+-- vocab maps
+function Text:word2class() return self._word2class end
+function Text:class2word() return self._class2word end
 
 -- special classes
 function Text:oov_id()   return self._word2class[self._oov_sym]   end
