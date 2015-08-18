@@ -15,48 +15,54 @@ require 'paths'
 local Text, parent = torch.class("Text")
 Text.isText = true
 
-Text._unknown_word   = 1  --  '_OOV_'
-Text._sentence_start = 2  --  '^'
-Text._sentence_end   = 3  --  '_END_'
-Text._word_break     = 4  --  '→'
-Text._padding        = 5  --  '_PAD_'
-Text._unknown_word_symbol   = '_OOV_'
-Text._sentence_start_symbol = '^'
-Text._sentence_end_symbol   = '_END_'
-Text._word_break_symbol     = '→'
-Text._padding_symbol        = '_PAD_'
-
 function Text:__init(config)
    config = config or {}
    assert(torch.type(config) == 'table' and not config[1], "Constructor requires key-value arguments")
-   local args, name, data_path, train_file, valid_file, test_file, unig_file, vocab_cover, vocab_size, max_length, max_reps, batch_size
+   local args, name, data_path, train_file, valid_file, test_file, unig_file, vocab_cover, vocab_size,
+         max_length, max_reps, batch_size, oov_sym, start_sym, end_sym, wb_sym, pad_sym
       = xlua.unpack(
       {config},
       'Text', nil,
+      -- paths
       {arg='name',        type='string', req=true,                 help='dataset name'},
       {arg='data_path',   type='string', default='data',           help='data directory'},
       {arg='train_file',  type='string', default='train.txt.gz',   help='training file'},
       {arg='valid_file',  type='string', default='valid.txt.gz',   help='validation file)'},
       {arg='test_file',   type='string', default='test.txt.gz',    help='test file'},
       {arg='unig_file',   type='string', default='1-grams.txt.gz', help='unigram frequencies file'},
+      -- sizes
       {arg='vocab_cover', type='string', default='100%',           help='word coverage of vocabulary'},
       {arg='vocab_size',  type='string', default=10000,            help='number of words in vocabulary'},
       {arg='max_length',  type='number', default=100,              help='maximum number of tokens in a line'},
-      {arg='max_reps',    type='number', default=math.huge,        help='maximum number of repeated tokens in a line'},
-      {arg='batch_size',  type='number', default=1,                help='maximum batch size'}
+      {arg='max_reps',    type='number', default=math.huge,        help='maximum repeated tokens in a line'},
+      {arg='batch_size',  type='number', default=1,                help='maximum batch size'},
+      -- special tokens
+      {arg='oov',         type='string', default='_OOV_',          help='out-of-vobabulary token'},
+      {arg='start',       type='string', default='_START_',        help='sentence start token'},
+      {arg='end',         type='string', default='_END_',          help='sentence end token'},
+      {arg='wb',          type='string', default='_WB_',           help='word break token'},
+      {arg='pad',         type='string', default='_PAD_',          help='padding token'}
    )
+   -- paths
    self._name = name
    self._data_path = data_path
    self._train_file = self:get_path(train_file)
    self._valid_file = self:get_path(valid_file)
    self._test_file = self:get_path(test_file)
    self._unig_file = self:get_path(unig_file)
+   -- sizes
    self._vocab_cover = vocab_cover
    self._orig_vocab_size = vocab_size
    self._vocab_size = vocab_size
    self._max_length = max_length
    self._max_reps = max_reps
    self._batch_size = batch_size
+   -- special symbols
+   self._oov_sym = oov_sym
+   self._start_sym = start_sym
+   self._end_sym = end_sym
+   self._wb_sym = wb_sym
+   self._pad_sym = pad_sym
 
    if not self:load_cache() then
       -- load all input files
@@ -75,25 +81,20 @@ function Text:__init(config)
 end
 
 function Text:load_vocab()
-   local OOV = Text._unknown_word
+   -- initalise maps
+   local class2word, word2class = {},  {}
+   table.insert(class2word, self._oov_sym)
+   table.insert(class2word, self._start_sym)
+   table.insert(class2word, self._end_sym)
+   table.insert(class2word, self._wb_sym)
+   table.insert(class2word, self._pad_sym)
+   for i,w in ipairs(class2word) do
+      word2class[w] = i
+   end
+   local OOV = word2class[self._oov_sym]
    local vocab_cover = self._vocab_cover
    local vocab_size = self._vocab_size
    local vocab_file = self._unig_file
-   -- first elements are reserved
-   local word2class = {
-      [Text._unknown_word_symbol]   = Text._unknown_word,
-      [Text._sentence_start_symbol] = Text._sentence_start,
-      [Text._sentence_end_symbol]   = Text._sentence_end,
-      [Text._word_break_symbol]     = Text._word_break,
-      [Text._padding_symbol]        = Text._padding
-   }
-   local class2word = {
-      Text._unknown_word_symbol,
-      Text._sentence_start_symbol,
-      Text._sentence_end_symbol,
-      Text._word_break_symbol,
-      Text._padding_symbol
-   }
    local counts = {0, 0, 0, 0, 0}
 
    -- determine the right vocab_size
@@ -154,18 +155,19 @@ function Text:load_text(path)
       curr_line = curr_line + 1
       -- is it empty?
       if line ~= '' then
-         local sentence = {}
+         local sentence = { self:start_id() } -- prepend start_id
          local tokens = line:split('%s+')
          if #tokens > self._max_length then trunc = trunc + 1 end
          -- build table of word classes
          local length = math.min(self._max_length, #tokens)
          for i=1, length do
             local word = tokens[i]
-            local wc = self._word2class[word] or Text._unknown_word
+            local wc = self._word2class[word] or self:oov_id()
             sentence[i] = wc
          end
          if self:ok_repeat(sentence) then
             -- convert it to tensor
+            assert(#sentence > 1)
             local t_sentence = torch.ShortTensor(sentence):reshape(1, length)
             local batch_list = sentence_set[length]
             if batch_list then
@@ -222,7 +224,7 @@ function Text:setCoveragePercentage(percent)
       local tokens = line:split("%s+")
       local word = tokens[1]
       -- if not OOV decrease remainder
-      if word ~= Text._sentence_start_symbol then
+      if not self:is_special_token(word) then
          words = words + 1
          local count = tokens[2]
          remainder = remainder - count
@@ -259,12 +261,12 @@ end
 -- restart batch counter
 function Text:reset_batch_pointer(batch_set)
    if batch_set then
-      self._batch_index[batch_set] = 1
+      self._batch_index[batch_set] = 14300
    else
       self._batch_index = {}
-      self._batch_index[self._train_batches] = 1
-      self._batch_index[self._valid_batches] = 1
-      self._batch_index[self._test_batches] = 1
+      self._batch_index[self._train_batches] = 14300
+      self._batch_index[self._valid_batches] = 14300
+      self._batch_index[self._test_batches] = 14300
    end
 end
 
@@ -279,7 +281,7 @@ function Text:next_batch(batch_list)
    -- shifted copy
    y:sub(1,-1,1,-2):copy(x:sub(1,-1,2,-1))
    -- end of sentence
-   y[{{},-1}] = Text._sentence_end
+   y[{{},-1}] = self:end_id()
    return x, y
 end
 
@@ -315,11 +317,11 @@ end
 
 -- check if a token is a reserved one
 function Text:is_special_token(token)
-   return token == Text._unknown_word_symbol or
-          token == Text._sentence_start_symbol or
-          token == Text._sentence_end_symbol or
-          token == Text._word_break_symbol or
-          token == Text._padding_symbol
+   return token == self._oov_sym or
+          token == self._start_sym or
+          token == self._end_sym or
+          token == self._wb_sym or
+          token == self._pad_sym
 end
 
 -- fast way of counting lines in a file
@@ -355,6 +357,11 @@ function Text:load_cache()
    check_param('_max_length')
    check_param('_max_reps')
    check_param('_batch_size')
+   check_param('_oov_sym')
+   check_param('_start_sym')
+   check_param('_end_sym')
+   check_param('_wb_sym')
+   check_param('_pad_sym')
    -- all good
    print('Using compatible cached version: '..path)
 
@@ -370,7 +377,21 @@ function Text:load_cache()
    return true
 end
 
--- alias
+-- [[ getters ]]
+
+-- special classes
+function Text:oov_id()   return self._word2class[self._oov_sym]   end
+function Text:start_id() return self._word2class[self._start_sym] end
+function Text:end_id()   return self._word2class[self._end_sym]   end
+function Text:wb_id()    return self._word2class[self._wb_sym]    end
+function Text:pad_id()   return self._word2class[self._pad_sym]   end
+-- special symbols
+function Text:oov_sym()   return self._oov_sym   end
+function Text:start_sym() return self._start_sym end
+function Text:end_sym()   return self._end_sym   end
+function Text:wb_sym()    return self._wb_sym    end
+function Text:pad_sym()   return self._pad_sym   end
+-- batch lists
 function Text:train_batches() return self._train_batches end
 function Text:valid_batches() return self._valid_batches end
-function Text:test_batches()  return self._test_batches end
+function Text:test_batches()  return self._test_batches  end
