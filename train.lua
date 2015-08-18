@@ -120,7 +120,7 @@ end
 -- create the data loader class
 --local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes)
 local loader = Text{
-                  name = 'hc_twitter',
+                  name = paths.basename(opt.data_dir),
                   vocab_size = 1e4,
                   batch_size = opt.batch_size,
                   max_length = 50,
