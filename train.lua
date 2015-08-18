@@ -208,6 +208,7 @@ function eval_split(split_index, max_batches)
 
     loader:reset_batch_pointer(loader:valid_batches()) -- move batch iteration pointer for this split to front
     local loss = 0
+    xlua.progress(1,n)
     --local rnn_state
 
     for i = 1,n do -- iterate over batches in the split
@@ -228,21 +229,23 @@ function eval_split(split_index, max_batches)
         end
         local rnn_state = {[0] = init_state_local}
         -- forward pass
+        local curr_loss = 0
         for t=1, x:size(2) do
             clones.rnn[t]:evaluate() -- for dropout proper functioning
             local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
             rnn_state[t] = {}
             for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end
             prediction = lst[#lst]
-            loss = loss + clones.criterion[t]:forward(prediction, y[{{}, t}])
+            curr_loss = curr_loss + clones.criterion[t]:forward(prediction, y[{{}, t}])
         end
         -- carry over lstm state
         rnn_state[0] = rnn_state[#rnn_state]
-        loss = loss / x:size(2)
-        print(i .. '/' .. n .. '...')
+        loss = loss + curr_loss / x:size(2)
+        xlua.progress(i, n)
         collectgarbage()
     end
 
+    xlua.progress(n, n)
     loss = loss / n
     return loss
 end
