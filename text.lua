@@ -163,18 +163,20 @@ function Text:load_text(path)
          for i=1, length do
             local word = tokens[i]
             local wc = self._word2class[word] or self:oov_id()
-            sentence[i] = wc
+            table.insert(sentence, wc)
          end
          if self:ok_repeat(sentence) then
             -- convert it to tensor
-            assert(#sentence > 1)
-            local t_sentence = torch.ShortTensor(sentence):reshape(1, length)
+            assert(#sentence >= 2)
+            local t_sentence = torch.ShortTensor(sentence):reshape(1, length+1)
             local batch_list = sentence_set[length]
             if batch_list then
                local batch = batch_list[#batch_list]
                if batch:size(1) >= self._batch_size then
                   table.insert(batch_list, t_sentence)
                else
+                  -- print(batch:size())
+                  -- print(t_sentence:size())
                   batch_list[#batch_list] = batch:cat(t_sentence, 1)
                end
             else
