@@ -67,13 +67,13 @@ function Text:__init(config)
    if not self:load_cache() then
       -- load all input files
       self:load_vocab()
-      self._train_set = self:load_text(self._train_file)
-      self._valid_set = self:load_text(self._valid_file)
-      self._test_set  = self:load_text(self._test_file)
+      --self._train_set = self:load_text(self._train_file)
+      --self._valid_set = self:load_text(self._valid_file)
+      --self._test_set  = self:load_text(self._test_file)
       -- initialise batch lists and index
-      self._train_batches = self:listify(self._train_set)
-      self._valid_batches = self:listify(self._valid_set)
-      self._test_batches  = self:listify(self._test_set)
+      self._train_batches = self:listify(self:load_text(self._train_file))
+      self._valid_batches = self:listify(self:load_text(self._valid_file))
+      self._test_batches  = self:listify(self:load_text(self._test_file))
       self:reset_batch_pointer()
       -- save a copy
       self:save()
@@ -334,6 +334,7 @@ end
 
 -- save a copy
 function Text:save()
+   collectgarbage()
    local path = paths.concat(self._data_path, self._name, self._name..'.t7')
    torch.save(path, self)
 end
