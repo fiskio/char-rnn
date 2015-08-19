@@ -274,10 +274,7 @@ end
 -- get the next batch from a list
 -- ie: txt:next_batch(txt:test_batches())
 function Text:next_batch(batch_list)
-   -- time keeping
-   if not self._timer then self._timer = torch.Timer()
-   self._elapsed = self._timer:time().real
-   -- load batch
+   -- increment index
    self._batch_index[batch_list] = self._batch_index[batch_list] + 1
    if self._batch_index[batch_list] > #batch_list then
       self._batch_index[batch_list] = 1 end
