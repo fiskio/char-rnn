@@ -118,7 +118,6 @@ if opt.gpuid >= 0 and opt.opencl == 1 then
 end
 
 -- create the data loader class
---local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes)
 local loader = Text{
                   name = paths.basename(opt.data_dir),
                   data_path = paths.dirname(opt.data_dir),
@@ -198,7 +197,8 @@ print('number of parameters in the model: ' .. params:nElement())
 clones = {}
 for name,proto in pairs(protos) do
     print('cloning ' .. name)
-    clones[name] = model_utils.clone_many_times(proto, opt.seq_length, not proto.parameters)
+    -- seq_length + 1 because Text prepends start of sequence token
+    clones[name] = model_utils.clone_many_times(proto, opt.seq_length+1, not proto.parameters)
 end
 
 -- evaluate the loss over an entire split
