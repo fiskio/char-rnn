@@ -262,30 +262,28 @@ end
 -- restart batch counter
 function Text:reset_batch_pointer(batch_set)
    if batch_set then
-      self._batch_index[batch_set] = 14300
+      self._batch_index[batch_set] = 1
    else
       self._batch_index = {}
-      self._batch_index[self._train_batches] = 14300
-      self._batch_index[self._valid_batches] = 14300
-      self._batch_index[self._test_batches] = 14300
+      self._batch_index[self._train_batches] = 1
+      self._batch_index[self._valid_batches] = 1
+      self._batch_index[self._test_batches] =  1
    end
 end
 
 -- get the next batch from a list
 -- ie: txt:next_batch(txt:test_batches())
 function Text:next_batch(batch_list)
-   -- increment index
    self._batch_index[batch_list] = self._batch_index[batch_list] + 1
    if self._batch_index[batch_list] > #batch_list then
       self._batch_index[batch_list] = 1 end
-   -- load inputs and targets
-   local inputs = batch_list[self._batch_index[batch_list]]
-   local targets = torch.Tensor():typeAs(inputs):resizeAs(inputs)
-   -- shifted copy of inputs
-   targets:sub(1,-1,1,-2):copy(inputs:sub(1,-1,2,-1))
+   local x = batch_list[self._batch_index[batch_list]]
+   local y = torch.Tensor():typeAs(x):resizeAs(x)
+   -- shifted copy
+   y:sub(1,-1,1,-2):copy(x:sub(1,-1,2,-1))
    -- end of sentence
-   targets[{{},-1}] = self:end_id()
-   return inputs, targets
+   y[{{},-1}] = self:end_id()
+   return x, y
 end
 
 -- check for excessive repetition
