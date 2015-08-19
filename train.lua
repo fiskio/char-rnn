@@ -352,7 +352,7 @@ for i = 1, iterations do
     local _, loss = optim_algo(feval, params, optim_state)
     local time = timer:time().real
 
-    local train_loss = loss[1] -- the loss is inside a list, pop it
+    local train_loss = math.exp(loss[1]) -- the loss is inside a list, pop it
     train_losses[i] = train_loss
 
     -- exponential learning rate decay
@@ -367,7 +367,7 @@ for i = 1, iterations do
     -- every now and then or on last iteration
     if i % opt.eval_val_every == 0 or i == iterations then
         -- evaluate loss on validation data
-        local val_loss = eval_split(loader:valid_batches()) -- 2 = validation
+        local val_loss = math.exp(eval_split(loader:valid_batches()))
         val_losses[i] = val_loss
 
         local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
@@ -385,7 +385,7 @@ for i = 1, iterations do
     end
 
     if i % opt.print_every == 0 then
-        print(string.format("%d/%d (epoch %.3f), train_loss = %6.8f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_loss, grad_params:norm() / params:norm(), time))
+        print(string.format("%d/%d (epoch %.3f), perplexity = %6.2f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_loss, grad_params:norm() / params:norm(), time))
     end
 
     if i % 10 == 0 then collectgarbage() end
