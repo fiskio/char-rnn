@@ -77,6 +77,8 @@ cmd:text()
 -- parse input params
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
+-- time keeping
+local elapsed = torch.Timer()
 -- train / val / test split for data, in fractions
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac}
@@ -120,8 +122,8 @@ end
 -- create the data loader class
 --local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes)
 local loader = Text{
-                  name = paths.dirname(opt.data_dir),
-                  data_path = paths.basedir(opt.data_dir),
+                  name = paths.basename(opt.data_dir),
+                  data_path = paths.dirname(opt.data_dir),
                   vocab_size = 1e4,
                   batch_size = opt.batch_size,
                   max_length = 50,
@@ -368,6 +370,7 @@ for i = 1, iterations do
 
         local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
         print('saving checkpoint to ' .. savefile)
+        print('elapsed: '..elapsed:time().real)
         local checkpoint = {}
         checkpoint.protos = protos
         checkpoint.opt = opt
@@ -377,6 +380,7 @@ for i = 1, iterations do
         checkpoint.i = i
         checkpoint.epoch = epoch
         checkpoint.vocab = loader._word2class
+        checkpoint.elapsed = elapsed:time().real
         torch.save(savefile, checkpoint)
     end
 

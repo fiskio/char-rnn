@@ -280,7 +280,7 @@ function Text:next_batch(batch_list)
       self._batch_index[batch_list] = 1 end
    -- load inputs and targets
    local inputs = batch_list[self._batch_index[batch_list]]
-   local targets = torch.Tensor():typeAs(x):resizeAs(x)
+   local targets = torch.Tensor():typeAs(inputs):resizeAs(inputs)
    -- shifted copy of inputs
    targets:sub(1,-1,1,-2):copy(inputs:sub(1,-1,2,-1))
    -- end of sentence
