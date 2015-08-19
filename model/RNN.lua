@@ -1,19 +1,18 @@
 local RNN = {}
 
-function RNN.rnn(input_size, rnn_size, n, dropout)
+function RNN.rnn(input_size, rnn_size, n_layers, embeddings, dropout)
 
-  local embeddings = 64
   -- there are n+1 inputs (hiddens on each layer and x)
   local inputs = {}
   table.insert(inputs, nn.Identity()()) -- x
-  for L = 1,n do
+  for L = 1,n_layers do
     table.insert(inputs, nn.Identity()()) -- prev_h[L]
 
   end
 
   local x, input_size_L
   local outputs = {}
-  for L = 1,n do
+  for L = 1,n_layers do
 
     local prev_h = inputs[L+1]
     if L == 1 then
