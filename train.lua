@@ -77,8 +77,6 @@ cmd:text()
 -- parse input params
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
--- time keeping
-local elapsed = torch.Timer()
 -- train / val / test split for data, in fractions
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac}
@@ -217,20 +215,22 @@ function eval_split(split_index, max_batches)
     for i = 1,n do -- iterate over batches in the split
         -- fetch a batch
         local x, y = loader:next_batch(loader:valid_batches())
-        if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
-            -- have to convert to float because integers can't be cuda()'d
-            x = x:float():cuda()
-            y = y:float():cuda()
-        end
-        if opt.gpuid >= 0 and opt.opencl == 1 then -- ship the input arrays to GPU
-            x = x:cl()
-            y = y:cl()
-        end
         local init_state_local = {}
         for i,t in ipairs(init_state) do
            init_state_local[i] = torch.zeros(x:size(1), opt.rnn_size)
         end
-        local rnn_state = {[0] = init_state_local}
+         if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
+            -- have to convert to float because integers can't be cuda()'d
+            x = x:float():cuda()
+            y = y:float():cuda()
+            for i,s in ipairs(init_state_local) do init_state_local[i] = s:cuda() end
+        end
+        if opt.gpuid >= 0 and opt.opencl == 1 then -- ship the input arrays to GPU
+            x = x:cl()
+            y = y:cl()
+            for i,s in ipairs(init_state_local) do init_state_local[i] = s:cl() end
+        end
+       local rnn_state = {[0] = init_state_local}
         -- forward pass
         local curr_loss = 0
         for t=1, x:size(2) do
@@ -263,14 +263,21 @@ function feval(x)
 
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(loader._train_batches)
+    local init_state_local = {}
+    for i,t in ipairs(init_state) do
+          init_state_local[i] = torch.zeros(x:size(1), opt.rnn_size)
+    end
+
     if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
         -- have to convert to float because integers can't be cuda()'d
         x = x:float():cuda()
         y = y:float():cuda()
+        for i,s in ipairs(init_state_local) do init_state_local[i] = s:cuda() end
     end
     if opt.gpuid >= 0 and opt.opencl == 1 then -- ship the input arrays to GPU
         x = x:cl()
         y = y:cl()
+        for i,s in ipairs(init_state_local) do init_state_local[i] = s:cuda() end
     end
 
     local tape = autobw.Tape()
@@ -285,11 +292,6 @@ function feval(x)
     print(x:size(), y:size())
     print(init_state_global)
     --]]
-    local init_state_local = {}
-    for i,t in ipairs(init_state) do
-          init_state_local[i] = torch.zeros(x:size(1), opt.rnn_size)
-    end
-
     local rnn_state = {[0] = init_state_local}
     local predictions = {}           -- softmax outputs
     local loss = 0
@@ -370,7 +372,6 @@ for i = 1, iterations do
 
         local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
         print('saving checkpoint to ' .. savefile)
-        print('elapsed: '..elapsed:time().real)
         local checkpoint = {}
         checkpoint.protos = protos
         checkpoint.opt = opt
@@ -380,7 +381,6 @@ for i = 1, iterations do
         checkpoint.i = i
         checkpoint.epoch = epoch
         checkpoint.vocab = loader._word2class
-        checkpoint.elapsed = elapsed:time().real
         torch.save(savefile, checkpoint)
     end
 
