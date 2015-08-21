@@ -242,7 +242,6 @@ function eval_split(split_index, max_batches)
             curr_loss = curr_loss + clones.criterion[t]:forward(prediction, y[{{}, t}])
         end
         -- carry over lstm state
-        rnn_state[0] = rnn_state[#rnn_state]
         loss = loss + curr_loss / x:size(2)
         xlua.progress(i, n)
         collectgarbage()
