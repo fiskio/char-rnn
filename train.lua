@@ -21,7 +21,6 @@ require 'autobw'
 
 require 'util.OneHot'
 require 'util.misc'
---local CharSplitLMMinibatchLoader = require 'util.CharSplitLMMinibatchLoader'
 local text = require 'text'
 local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
@@ -30,7 +29,7 @@ local RNN = require 'model.RNN'
 
 cmd = torch.CmdLine()
 cmd:text()
-cmd:text('Train a character-level language model')
+cmd:text('Train a recurrent language model')
 cmd:text()
 cmd:text('Options')
 -- data
@@ -283,14 +282,7 @@ function feval(x)
 
     ------------------- forward pass -------------------
     tape:begin()
-    --[[
-    q = math.floor(math.random(x:size(1))) + 1
-    print(q)
-    x = x:sub(1, q)
-    y = y:sub(1, q)
-    print(x:size(), y:size())
-    print(init_state_global)
-    --]]
+
     local rnn_state = {[0] = init_state_local}
     local predictions = {}           -- softmax outputs
     local loss = 0
