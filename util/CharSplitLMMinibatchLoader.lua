@@ -1,6 +1,7 @@
 
 -- Modified from https://github.com/oxford-cs-ml-2015/practical6
 -- the modification included support for train/val/test splits
+local utf8 = require 'lua-utf8'
 
 local CharSplitLMMinibatchLoader = {}
 CharSplitLMMinibatchLoader.__index = CharSplitLMMinibatchLoader
@@ -127,28 +128,39 @@ function CharSplitLMMinibatchLoader.text_to_tensor(in_textfile, out_vocabfile, o
     local timer = torch.Timer()
 
     print('loading text file...')
-    local cache_len = 10000
-    local rawdata
     local tot_len = 0
-    f = io.open(in_textfile, "r")
-
+    local max_chars = 100
     -- create vocabulary if it doesn't exist yet
-    print('creating vocabulary mapping...')
-    -- record all characters to a set
     local unordered = {}
-    rawdata = f:read(cache_len)
-    repeat
-        for char in rawdata:gmatch'.' do
-            if not unordered[char] then unordered[char] = true end
+    print('creating vocabulary mapping...')
+    local emoji_count = 0
+    for line in io.lines('util/emoji_all.txt') do
+       for pos, code in utf8.next, line do
+           local char = utf8.char(code)
+           if not unordered[char] then
+              unordered[char] = true
+              emoji_count = emoji_count + 1
+           end
+       end
+    end
+    print(emoji_count)
+    local char_tokens = 0
+    -- record all characters to a set
+    for line in io.lines(in_textfile) do
+        for pos, code in utf8.next, line do
+           local char = utf8.char(code)
+           if not unordered[char] and char_tokens < max_chars then
+              unordered[char] = true
+              char_tokens = char_tokens + 1
+           end
+           tot_len = tot_len + 1
         end
-        tot_len = tot_len + #rawdata
-        rawdata = f:read(cache_len)
-    until not rawdata
-    f:close()
+    end
     -- sort into a table (i.e. keys become 1..N)
     local ordered = {}
     for char in pairs(unordered) do ordered[#ordered + 1] = char end
     table.sort(ordered)
+    print(ordered)
     -- invert `ordered` to create the char->int mapping
     local vocab_mapping = {}
     for i, char in ipairs(ordered) do
@@ -156,19 +168,21 @@ function CharSplitLMMinibatchLoader.text_to_tensor(in_textfile, out_vocabfile, o
     end
     -- construct a tensor with all the data
     print('putting data into tensor...')
-    local data = torch.ByteTensor(tot_len) -- store it into 1D first, then rearrange
-    f = io.open(in_textfile, "r")
+    local data = torch.ShortTensor(tot_len) -- store it into 1D first, then rearrange
     local currlen = 0
-    rawdata = f:read(cache_len)
-    repeat
-        for i=1, #rawdata do
-            data[currlen+i] = vocab_mapping[rawdata:sub(i, i)] -- lua has no string indexing using []
+    for line in io.lines(in_textfile) do
+        for pos, code in utf8.next, line do
+           currlen = currlen + 1
+           local idx = vocab_mapping[utf8.char(code)] or vocab_mapping[' ']
+           assert(idx ~= 0)
+           if idx == 0 then error(code) end
+           data[currlen] = idx
+           --print(utf8.char(code))
         end
-        currlen = currlen + #rawdata
-        rawdata = f:read(cache_len)
-    until not rawdata
-    f:close()
-
+    end
+    assert(currlen == tot_len)
+    for i=1,data:size(1) do if data[i] == 0 then print(i) end end
+    assert(data:min() == 1)
     -- save output preprocessed files
     print('saving ' .. out_vocabfile)
     torch.save(out_vocabfile, vocab_mapping)
