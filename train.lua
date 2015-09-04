@@ -80,6 +80,13 @@ torch.manualSeed(opt.seed)
 local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
 local split_sizes = {opt.train_frac, opt.val_frac, test_frac}
 
+local emojis = {}
+for line in io.lines('util/emoji_all.txt') do
+   for pos, code in utf8.next, line do
+      local char = utf8.char(code)
+      emojis[char] = true
+   end
+end
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 if opt.gpuid >= 0 and opt.opencl == 0 then
     local ok, cunn = pcall(require, 'cunn')
@@ -266,6 +273,7 @@ function feval(x)
         rnn_state[t] = {}
         for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end -- extract the state, without output
         predictions[t] = lst[#lst] -- last element is the prediction
+
         loss = loss + clones.criterion[t]:forward(predictions[t], y[{{}, t}])
     end
     loss = loss / opt.seq_length
