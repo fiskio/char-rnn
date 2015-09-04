@@ -1,4 +1,3 @@
-
 local LSTM = {}
 function LSTM.lstm(input_size, rnn_size, n, dropout)
   dropout = dropout or 0 
@@ -19,8 +18,9 @@ function LSTM.lstm(input_size, rnn_size, n, dropout)
     local prev_c = inputs[L*2]
     -- the input to this layer
     if L == 1 then 
-      x = OneHot(input_size)(inputs[1])
-      input_size_L = input_size
+      emb_size = 32
+      x = nn.LookupTable(input_size, emb_size)(inputs[1])
+      input_size_L = emb_size
     else 
       x = outputs[(L-1)*2] 
       if dropout > 0 then x = nn.Dropout(dropout)(x) end -- apply dropout, if any
