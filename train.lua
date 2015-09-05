@@ -22,6 +22,7 @@ require 'autobw'
 
 require 'util.OneHot'
 require 'util.misc'
+local utf8 = require 'lua-utf8'
 local CharSplitLMMinibatchLoader = require 'util.CharSplitLMMinibatchLoader'
 local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
@@ -64,7 +65,7 @@ cmd:option('-val_frac',0.05,'fraction of data that goes into validation set')
 cmd:option('-init_from', '', 'initialize network parameters from checkpoint at this path')
 -- bookkeeping
 cmd:option('-seed',123,'torch manual random number generator seed')
-cmd:option('-print_every',1,'how many steps/minibatches between printing out the loss')
+cmd:option('-print_every',10,'how many steps/minibatches between printing out the loss')
 cmd:option('-eval_val_every',1000,'every how many iterations should we evaluate on validation data?')
 cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
 cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
@@ -87,6 +88,7 @@ for line in io.lines('util/emoji_all.txt') do
       emojis[char] = true
    end
 end
+print(emojis)
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 if opt.gpuid >= 0 and opt.opencl == 0 then
     local ok, cunn = pcall(require, 'cunn')
@@ -127,6 +129,8 @@ end
 local loader = CharSplitLMMinibatchLoader.create(opt.data_dir, opt.batch_size, opt.seq_length, split_sizes)
 local vocab_size = loader.vocab_size  -- the number of distinct characters
 local vocab = loader.vocab_mapping
+local ivocab = {}
+for c,i in pairs(vocab) do ivocab[i] = c end
 print('vocab size: ' .. vocab_size)
 -- make sure output directory exists
 if not path.exists(opt.checkpoint_dir) then lfs.mkdir(opt.checkpoint_dir) end
@@ -281,7 +285,34 @@ function feval(x)
     tape:stop()
     ------------------ backward pass -------------------
     tape:backward()
-    ------------------------ misc ----------------------
+    --initialize gradient at time t to be zeros (there's no influence from future)]]
+    --local drnn_state = {[opt.seq_length] = clone_list(init_state, true)} -- true also zeros the clones
+    --for t=opt.seq_length,1,-1 do
+       ---- backprop through loss, and softmax/linear
+       --local doutput_t = clones.criterion[t]:backward(predictions[t], y[{{}, t}])
+       --if opt.emoji_only then
+          ---- skip non emojis
+          --local pv = y[{{}, t}]
+          --for i=1, pv:size(1) do
+             --local p = pv[i]
+             --if not emojis[ivocab[p]] then
+                ----print('skipping: '..ivocab[p])
+                --doutput_t[i] = 0
+             --end
+          --end
+       --end
+       --table.insert(drnn_state[t], doutput_t)
+       --local dlst = clones.rnn[t]:backward({x[{{}, t}], unpack(rnn_state[t-1])}, drnn_state[t])
+       --drnn_state[t-1] = {}
+       --for k,v in pairs(dlst) do
+          --if k > 0 then -- k == 1 is gradient on x, which we dont need
+             ---- note we do k-1 because first item is dembeddings, and then follow the
+             ---- derivatives of the state, starting at index 2. I know...
+             --drnn_state[t-1][k-1] = v
+          --end
+       --end
+    --end
+    --------------------- misc ----------------------
     -- transfer final state to initial state (BPTT)
     init_state_global = rnn_state[#rnn_state] -- NOTE: I don't think this needs to be a clone, right?
     -- clip gradient element-wise
