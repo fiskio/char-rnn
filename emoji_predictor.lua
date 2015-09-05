@@ -108,6 +108,7 @@ function predict_emoji(seed_text, npreds)
    state_size = #current_state
 
    -- do a few seeded timesteps
+   local prediction
    if string.len(seed_text) > 0 then
       gprint('seeding with ' .. seed_text)
       gprint('--------------------------')
@@ -137,7 +138,6 @@ function predict_emoji(seed_text, npreds)
       if #emoji_preds >= npreds then break end
       local char = ivocab[indices[1][i]]
       if emoji_list[char] then
-         --local pair = { [char] = math.exp(probs[1][i]) }
          local pair = { [char] = i }
          table.insert(emoji_preds, pair)
       end
@@ -149,7 +149,7 @@ if opt.interface == 'console' then
    while(true) do
       local line = io.read("*line")
       if not line then break end
-      local p = predict_emoji('ciao', opt.npreds)
+      local p = predict_emoji(line, opt.npreds)
       print(p)
    end
 elseif opt.interface == 'web' then
