@@ -66,13 +66,11 @@ function SCRNN.scrnn(vocab_size, emb_size, hidden_size, context_size, n_layers, 
    -- decoder
    local decoder = nn.Linear(emb_size, vocab_size)(proj)
    -- share embedding matrix
-   -- dictionary.data.module:share(decoder.data.module, 'weight')
+   dictionary.data.module:share(decoder.data.module, 'weight')
    -- softmax
    local logsoft = nn.LogSoftMax()(decoder)
    table.insert(outputs, logsoft)
 
-   for k,v in pairs(dictionary) do print(k,v) end
-   for k,v in pairs(decoder) do print(k,v) end
    return nn.gModule(inputs, outputs)
 end
 
