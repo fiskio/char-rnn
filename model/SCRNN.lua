@@ -1,6 +1,6 @@
 local SCRNN = {}
 
-function SCRNN.scrnn(vocab_size, emb_size, hidden_size, context_size, n_layers, dropout, alpha)
+function SCRNN.scrnn(vocab_size, emb_size, hidden_size, context_size, n_layers, dropout, alpha, share)
    -- defaults
    emb_size = emb_size or 128
    hidden_size = hidden_size or 512
@@ -8,6 +8,7 @@ function SCRNN.scrnn(vocab_size, emb_size, hidden_size, context_size, n_layers, 
    n_layers = n_layers or 1
    dropout = dropout or 0
    alpha = alpha or 0.95
+   share = share or true
    -- there will be 2*n+1 inputs
    local inputs = {}
    table.insert(inputs, nn.Identity()()) -- x
@@ -66,7 +67,9 @@ function SCRNN.scrnn(vocab_size, emb_size, hidden_size, context_size, n_layers, 
    -- decoder
    local decoder = nn.Linear(emb_size, vocab_size)(proj)
    -- share embedding matrix
-   dictionary.data.module:share(decoder.data.module, 'weight')
+   if share then
+      decoder.data.module:share(dictionary.data.module, 'weight', 'gradWeight')
+   end
    -- softmax
    local logsoft = nn.LogSoftMax()(decoder)
    table.insert(outputs, logsoft)
