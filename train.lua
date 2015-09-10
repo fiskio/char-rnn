@@ -26,6 +26,7 @@ local model_utils = require 'util.model_utils'
 local LSTM = require 'model.LSTM'
 local GRU = require 'model.GRU'
 local RNN = require 'model.RNN'
+local SCRNN = require 'model.SCRNN'
 
 cmd = torch.CmdLine()
 cmd:text()
@@ -35,7 +36,8 @@ cmd:text('Options')
 -- data
 cmd:option('-data_dir','data/tinyshakespeare','data directory. Should contain the file input.txt with input data')
 -- model params
-cmd:option('-rnn_size', 128, 'size of LSTM internal state')
+cmd:option('-hidden_size', 128, 'size of LSTM internal state')
+cmd:option('-context_size', 32, 'size of LSTM internal state')
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm,gru or rnn')
 cmd:option('-embeddings', 64, 'size of word embeddings')
@@ -146,19 +148,21 @@ if string.len(opt.init_from) > 0 then
     end
     assert(vocab_compatible, 'error, the character vocabulary for this dataset and the one in the saved checkpoint are not the same. This is trouble.')
     -- overwrite model settings based on checkpoint to ensure compatibility
-    print('overwriting rnn_size=' .. checkpoint.opt.rnn_size .. ', num_layers=' .. checkpoint.opt.num_layers .. ' based on the checkpoint.')
-    opt.rnn_size = checkpoint.opt.rnn_size
+    print('overwriting hidden_size=' .. checkpoint.opt.hidden_size .. ', num_layers=' .. checkpoint.opt.num_layers .. ' based on the checkpoint.')
+    opt.hidden_size = checkpoint.opt.hidden_size
     opt.num_layers = checkpoint.opt.num_layers
     do_random_init = false
 else
     print('creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
     protos = {}
     if opt.model == 'lstm' then
-        protos.rnn = LSTM.lstm(vocab_size, opt.rnn_size, opt.num_layers, opt.embeddings, opt.dropout)
+        protos.rnn = LSTM.lstm(vocab_size, opt.hidden_size, opt.num_layers, opt.embeddings, opt.dropout)
     elseif opt.model == 'gru' then
-        protos.rnn = GRU.gru(vocab_size, opt.rnn_size, opt.num_layers, opt.embeddings, opt.dropout)
+        protos.rnn = GRU.gru(vocab_size, opt.hidden_size, opt.num_layers, opt.embeddings, opt.dropout)
     elseif opt.model == 'rnn' then
-        protos.rnn = RNN.rnn(vocab_size, opt.rnn_size, opt.num_layers, opt.embeddings, opt.dropout)
+        protos.rnn = RNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.embeddings, opt.dropout)
+    elseif opt.model == 'scrnn' then
+        protos.rnn = SCRNN.scrnn(vocab_size, opt.embeddings, opt.hidden_size, opt.context_size, opt.num_layers, opt.dropout)
     end
     protos.criterion = nn.ClassNLLCriterion()
 end
@@ -166,7 +170,13 @@ end
 -- the initial state of the cell/hidden states
 init_state = {}
 for L=1,opt.num_layers do
-    local h_init = torch.zeros(opt.batch_size, opt.rnn_size)
+    if opt.model == 'scrnn' then
+       local s_init = torch.zeros(opt.batch_size, opt.context_size)
+       if opt.gpuid >=0 and opt.opencl == 0 then s_init = h_init:cuda() end
+       if opt.gpuid >=0 and opt.opencl == 1 then s_init = s_init:cl() end
+       table.insert(init_state, s_init:clone())
+    end
+    local h_init = torch.zeros(opt.batch_size, opt.hidden_size)
     if opt.gpuid >=0 and opt.opencl == 0 then h_init = h_init:cuda() end
     if opt.gpuid >=0 and opt.opencl == 1 then h_init = h_init:cl() end
     table.insert(init_state, h_init:clone())
@@ -216,7 +226,7 @@ function eval_split(split_index, max_batches)
         local x, y = loader:next_batch(loader:valid_batches())
         local init_state_local = {}
         for i,t in ipairs(init_state) do
-           init_state_local[i] = torch.zeros(x:size(1), opt.rnn_size)
+           init_state_local[i] = torch.zeros(x:size(1), t:size(2))
         end
          if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
             -- have to convert to float because integers can't be cuda()'d
@@ -263,7 +273,7 @@ function feval(x)
     local x, y = loader:next_batch(loader._train_batches)
     local init_state_local = {}
     for i,t in ipairs(init_state) do
-          init_state_local[i] = torch.zeros(x:size(1), opt.rnn_size)
+          init_state_local[i] = torch.zeros(x:size(1), t:size(2))
     end
 
     if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
