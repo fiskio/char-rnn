@@ -4,7 +4,7 @@ function SCRNN.scrnn(vocab_size, emb_size, hidden_size, context_size, n_layers, 
    -- defaults
    emb_size = emb_size or 128
    hidden_size = hidden_size or 512
-   context_size = context_size or 64
+   context_size = context_size or 128
    n_layers = n_layers or 1
    dropout = dropout or 0
    alpha = alpha or 0.95
@@ -68,7 +68,7 @@ function SCRNN.scrnn(vocab_size, emb_size, hidden_size, context_size, n_layers, 
    local decoder = nn.Linear(emb_size, vocab_size)(proj)
    -- share embedding matrix
    if share then
-      decoder.data.module:share(dictionary.data.module, 'weight', 'gradWeight')
+      dictionary.data.module:share(decoder.data.module, 'weight', 'gradWeight')
    end
    -- softmax
    local logsoft = nn.LogSoftMax()(decoder)
