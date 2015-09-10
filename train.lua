@@ -172,7 +172,7 @@ init_state = {}
 for L=1,opt.num_layers do
     if opt.model == 'scrnn' then
        local s_init = torch.zeros(opt.batch_size, opt.context_size)
-       if opt.gpuid >=0 and opt.opencl == 0 then s_init = h_init:cuda() end
+       if opt.gpuid >=0 and opt.opencl == 0 then s_init = s_init:cuda() end
        if opt.gpuid >=0 and opt.opencl == 1 then s_init = s_init:cl() end
        table.insert(init_state, s_init:clone())
     end
