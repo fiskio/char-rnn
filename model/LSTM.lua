@@ -11,6 +11,7 @@ function LSTM.lstm(input_size, rnn_size, n_layers, emb_size, dropout)
   end
 
   local x, input_size_L
+  local encoder = nn.LookupTable(input_size, emb_size)(inputs[1])
   local outputs = {}
   for L = 1, n_layers do
     -- c,h from previos timesteps
@@ -18,7 +19,7 @@ function LSTM.lstm(input_size, rnn_size, n_layers, emb_size, dropout)
     local prev_c = inputs[L*2]
     -- the input to this layer
     if L == 1 then
-      x = nn.LookupTable(input_size, emb_size)(inputs[1])
+      x = encoder
       input_size_L = emb_size
     else
       x = outputs[(L-1)*2]
@@ -53,8 +54,10 @@ function LSTM.lstm(input_size, rnn_size, n_layers, emb_size, dropout)
   -- set up the decoder
   local top_h = outputs[#outputs]
   if dropout > 0 then top_h = nn.Dropout(dropout)(top_h) end
-  local proj = nn.Linear(rnn_size, input_size)(top_h)
-  local logsoft = nn.LogSoftMax()(proj)
+  local proj = nn.Linear(rnn_size, emb_size)(top_h)
+  local decoder = nn.Linear(emb_size, input_size)(proj)
+  encoder.data.module:share(decoder.data.module, 'weight', 'gradWeight')
+  local logsoft = nn.LogSoftMax()(decoder)
   table.insert(outputs, logsoft)
 
   return nn.gModule(inputs, outputs)
