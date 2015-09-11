@@ -43,9 +43,9 @@ cmd:option('-model', 'lstm', 'lstm | gru | rnn | scrnn')
 cmd:option('-embeddings', 128, 'size of word embeddings')
 -- optimization
 cmd:option('-optim', 'rmsprop', 'Optimisation algorithm')
-cmd:option('-learning_rate',2e-3,'learning rate')
-cmd:option('-learning_rate_decay',0.5,'learning rate decay')
-cmd:option('-learning_rate_decay_after',10,'in number of epochs, when to start decaying the learning rate')
+cmd:option('-learning_rate',1e-3,'learning rate')
+cmd:option('-learning_rate_decay',0.95,'learning rate decay')
+cmd:option('-learning_rate_decay_after',25,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
 cmd:option('-sgd_weight_decay', 0, 'weight decay')
 cmd:option('-sgd_momentum', 0, 'momentum')
@@ -55,10 +55,10 @@ cmd:option('-rmsprop_epsilon', 1e-8, 'value with which to inistialise m')
 cmd:option('-adam_beta1', 0.9, 'first moment coefficient')
 cmd:option('-adam_beta2', 0.999, 'second moment coefficient')
 cmd:option('-adam_lambda', 1-1e-8, 'first moment decay')
-cmd:option('-adadelta_rho', 0.9, 'interpolation parameter')
+cmd:option('-adadelta_rho', 0.95, 'interpolation parameter')
 cmd:option('-seq_length',50,'number of timesteps to unroll for')
 cmd:option('-batch_size',32,'number of sequences to train on in parallel')
-cmd:option('-max_epochs',50,'number of full passes through the training data')
+cmd:option('-max_epochs',10,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-init_from', '', 'initialize network parameters from checkpoint at this path')
 -- bookkeeping
@@ -75,9 +75,6 @@ cmd:text()
 -- parse input params
 opt = cmd:parse(arg)
 torch.manualSeed(opt.seed)
--- train / val / test split for data, in fractions
-local test_frac = math.max(0, 1 - (opt.train_frac + opt.val_frac))
-local split_sizes = {opt.train_frac, opt.val_frac, test_frac}
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 if opt.gpuid >= 0 and opt.opencl == 0 then
@@ -357,8 +354,10 @@ for i = 1, iterations do
     if i % #loader._train_batches == 0 and opt.learning_rate_decay < 1 then
         if epoch >= opt.learning_rate_decay_after then
             local decay_factor = opt.learning_rate_decay
-            optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
-            print('decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
+            if optim_state.learningRate then
+	       optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
+               print('decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
+            end
         end
     end
 
