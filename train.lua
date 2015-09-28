@@ -41,9 +41,9 @@ cmd:text('Options')
 cmd:option('-data_dir','data/tinyshakespeare','data directory. Should contain the file input.txt with input data')
 -- model params
 cmd:option('-hidden_size', 512, 'size of LSTM internal state')
-cmd:option('-context_size', 128, 'size of LSTM internal state')
-cmd:option('-num_layers', 2, 'number of layers in the LSTM')
-cmd:option('-model', 'lstm', 'rnn | gru | lstm | scrnn')
+cmd:option('-context_size', 128, 'size of SCRNN context state')
+cmd:option('-num_layers', 1, 'number of layers in the LSTM')
+cmd:option('-model', 'rnn', 'rnn | gru | lstm | scrnn')
 cmd:option('-embeddings', 128, 'size of word embeddings')
 cmd:option('-hsm', -1, 'HSM classes, 0 is off, -1 is sqrt(vocab)')
 -- optimization
@@ -63,7 +63,7 @@ cmd:option('-adam_lambda', 1-1e-8, 'first moment decay')
 cmd:option('-adadelta_rho', 0.95, 'interpolation parameter')
 cmd:option('-seq_length',50,'number of timesteps to unroll for')
 cmd:option('-batch_size',32,'number of sequences to train on in parallel')
-cmd:option('-max_epochs',10,'number of full passes through the training data')
+cmd:option('-max_epochs',50,'number of full passes through the training data')
 cmd:option('-grad_clip',5,'clip gradients at this value')
 cmd:option('-init_from', '', 'initialize network parameters from checkpoint at this path')
 -- bookkeeping
@@ -366,7 +366,7 @@ for i = 1, iterations do
         if epoch >= opt.learning_rate_decay_after then
             local decay_factor = opt.learning_rate_decay
             if optim_state.learningRate then
-	       optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
+               optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
                print('decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
             end
         end
