@@ -169,9 +169,10 @@ else
     elseif opt.model == 'scrnn' then
         protos.rnn = SCRNN.scrnn(vocab_size, opt.embeddings, opt.hidden_size, opt.context_size, opt.num_layers, opt.dropout)
     end
+    -- HSM?
     if opt.hsm ~= 0 then
        print(loader:hsm_mapping():size())
-       protos.criterion = nn.HLogSoftMax(loader:hsm_mapping(), opt.embeddings)
+       protos.criterion = nn.HLogSoftMax(loader:hsm_mapping(), opt.hidden_size)
     else
        protos.criterion = nn.ClassNLLCriterion()
     end
@@ -204,11 +205,12 @@ if opt.gpuid >= 0 and opt.opencl == 1 then
 end
 
 -- put the above things into one flattened parameters tensor
-params, grad_params = model_utils.combine_all_parameters(protos.rnn)
+params, grad_params = model_utils.combine_all_parameters(protos.rnn, protos.criterion)
 
 -- initialization
 if do_random_init then
-params:uniform(-0.08, 0.08) -- small numbers uniform
+   -- TODO improve initialisation
+   params:uniform(-0.08, 0.08) -- small numbers uniform
 end
 
 print('number of parameters in the model: ' .. params:nElement())
@@ -257,8 +259,7 @@ function eval_split(split_index, max_batches)
             local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
             rnn_state[t] = {}
             for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end
-            prediction = lst[#lst]
-            curr_loss = curr_loss + clones.criterion[t]:forward(prediction, y[{{}, t}])
+            curr_loss = curr_loss + clones.criterion[t]:forward(lst[#lst], y[{{}, t}])
         end
         -- carry over lstm state
         loss = loss + curr_loss / x:size(2)
@@ -272,12 +273,12 @@ function eval_split(split_index, max_batches)
 end
 
 -- do fwd/bwd and return loss, grad_params
---local init_state_global = clone_list(init_state)
 function feval(x)
     if x ~= params then
         params:copy(x)
     end
     grad_params:zero()
+    --if opt.hsm ~= 0 then hsm_grad_params:zero() end
 
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(loader._train_batches)
@@ -311,10 +312,7 @@ function feval(x)
         local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
         rnn_state[t] = {}
         for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end -- extract the state, without output
-      --   print(lst[#lst]:size())
-
-        predictions[t] = lst[#lst] -- last element is the prediction
-        loss = loss + clones.criterion[t]:forward(predictions[t], y[{{}, t}])
+        loss = loss + clones.criterion[t]:forward(lst[#lst], y[{{}, t}])
     end
     loss = loss / x:size(2)
 
@@ -326,6 +324,7 @@ function feval(x)
     -- init_state_global = rnn_state[#rnn_state] -- NOTE: I don't think this needs to be a clone, right?
     -- clip gradient element-wise
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
+    -- TODO renorm?
     return loss, grad_params
 end
 

@@ -36,15 +36,22 @@ function RNN.rnn(input_size, rnn_size, n_layers, embeddings, dropout, hsm)
   end
    -- set up the decoder
    local top_h = outputs[#outputs]
-   if dropout > 0 then top_h = nn.Dropout(dropout)(top_h) end
-   local proj = nn.Linear(rnn_size, embeddings)(top_h)
+   if dropout > 0 then
+      top_h = nn.Dropout(dropout)(top_h)
+   else
+      top_h = nn.Identity()(top_h)
+   end
    -- HSM?
    if hsm == 0 then
+      -- no hsm
+      local proj = nn.Linear(rnn_size, embeddings)(top_h)
       local final = nn.Linear(embeddings, input_size)(proj)
       local logsoft = nn.LogSoftMax()(final)
+      -- TODO sharing final
       table.insert(outputs, logsoft)
    else
-      table.insert(outputs, proj)
+      -- hsm
+      table.insert(outputs, top_h)
    end
 
   return nn.gModule(inputs, outputs)
