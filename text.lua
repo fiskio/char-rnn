@@ -19,7 +19,7 @@ function Text:__init(config)
    config = config or {}
    assert(torch.type(config) == 'table' and not config[1], "Constructor requires key-value arguments")
    local args, name, data_path, train_file, valid_file, test_file, unig_file, vocab_cover, vocab_size,
-         max_length, max_reps, batch_size, oov_sym, start_sym, end_sym, wb_sym, pad_sym
+         max_length, max_reps, batch_size, hsm_classes, oov_sym, start_sym, end_sym, wb_sym, pad_sym
       = xlua.unpack(
       {config},
       'Text', nil,
@@ -36,6 +36,7 @@ function Text:__init(config)
       {arg='max_length',  type='number', default=100,              help='maximum number of tokens in a line'},
       {arg='max_reps',    type='number', default=math.huge,        help='maximum repeated tokens in a line'},
       {arg='batch_size',  type='number', default=1,                help='maximum batch size'},
+      {arg='hsm_classes', type='number', default=-1,               help='HSM, 0 is off, -1 is sqrt(vocab)'},
       -- special tokens
       {arg='oov',         type='string', default='_OOV_',          help='out-of-vobabulary token'},
       {arg='start',       type='string', default='_START_',        help='sentence start token'},
@@ -57,6 +58,7 @@ function Text:__init(config)
    self._max_length = max_length
    self._max_reps = max_reps
    self._batch_size = batch_size
+   self._hsm_classes = hsm_classes
    -- special symbols
    self._oov_sym = oov_sym
    self._start_sym = start_sym
@@ -67,6 +69,7 @@ function Text:__init(config)
    if not self:load_cache() then
       -- load all input files
       self:load_vocab()
+      self:setupHSM()
       --self._train_set = self:load_text(self._train_file)
       --self._valid_set = self:load_text(self._valid_file)
       --self._test_set  = self:load_text(self._test_file)
@@ -359,6 +362,7 @@ function Text:load_cache()
    check_param('_max_length')
    check_param('_max_reps')
    check_param('_batch_size')
+   check_param('_hsm_classes')
    check_param('_oov_sym')
    check_param('_start_sym')
    check_param('_end_sym')
@@ -375,15 +379,53 @@ function Text:load_cache()
    self._word2class = cached._word2class
    self._class2word = cached._class2word
    self._batch_index = cached._batch_index
+   self._hsm_classes = cached._hsm_classes
+   self._hsm_mapping = cached._hsm_mapping
    self:reset_batch_pointer()
    return true
 end
 
+-- [[ HSM ]]
+function Text:setupHSM()
+   --HSMClass = require 'util.HSMClass'
+   --foo = require 'util.HLogSoftMax'
+   if self._hsm_classes ~= 0 then
+      local vocab_size = #self._class2word
+      print(vocab_size)
+      local n_classes = (self._hsm_classes == -1) and torch.round(torch.sqrt(vocab_size)) or self._hsm_classes
+      local mapping = torch.LongTensor(vocab_size, 2):zero()
+      local n_in_each_cluster = vocab_size / n_classes
+      local _, idx = torch.sort(torch.randn(vocab_size), 1, true)
+      local n_in_cluster = {} --number of tokens in each cluster
+      local c = 1
+      for i = 1, idx:size(1) do
+         local word_idx = idx[i]
+         if n_in_cluster[c] == nil then
+            n_in_cluster[c] = 1
+         else
+            n_in_cluster[c] = n_in_cluster[c] + 1
+         end
+         mapping[word_idx][1] = c
+         mapping[word_idx][2] = n_in_cluster[c]
+         if n_in_cluster[c] >= n_in_each_cluster then
+            c = c+1
+         end
+         if c > n_classes then --take care of some corner cases
+            c = n_classes
+         end
+      end
+      print(string.format('using hierarchical softmax with %d classes', n_classes))
+      print(mapping)
+      self._hsm_mapping = mapping
+   end
+end
+
 -- [[ getters ]]
 -- vocab maps
-function Text:word2class() return self._word2class end
-function Text:class2word() return self._class2word end
-
+function Text:word2class()  return self._word2class end
+function Text:class2word()  return self._class2word end
+function Text:vocab_size()  return #self._class2word end
+function Text:hsm_mapping() return self._hsm_mapping end
 -- special classes
 function Text:oov_id()   return self._word2class[self._oov_sym]   end
 function Text:start_id() return self._word2class[self._start_sym] end

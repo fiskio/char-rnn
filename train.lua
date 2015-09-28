@@ -21,12 +21,16 @@ require 'autobw'
 
 require 'util.OneHot'
 require 'util.misc'
+require 'util.HLogSoftMax'
+require 'util.Squeeze'
 local text = require 'text'
 local model_utils = require 'util.model_utils'
+HSMClass = require 'util.HSMClass'
 local LSTM = require 'model.LSTM'
 local GRU = require 'model.GRU'
 local RNN = require 'model.RNN'
 local SCRNN = require 'model.SCRNN'
+
 
 cmd = torch.CmdLine()
 cmd:text()
@@ -41,6 +45,7 @@ cmd:option('-context_size', 32, 'size of LSTM internal state')
 cmd:option('-num_layers', 2, 'number of layers in the LSTM')
 cmd:option('-model', 'lstm', 'lstm,gru or rnn')
 cmd:option('-embeddings', 64, 'size of word embeddings')
+cmd:option('-hsm', -1, 'HSM classes, 0 is off, -1 is sqrt(vocab)')
 -- optimization
 cmd:option('-optim', 'rmsprop', 'Optimisation algorithm')
 cmd:option('-learning_rate',2e-3,'learning rate')
@@ -160,11 +165,16 @@ else
     elseif opt.model == 'gru' then
         protos.rnn = GRU.gru(vocab_size, opt.hidden_size, opt.num_layers, opt.embeddings, opt.dropout)
     elseif opt.model == 'rnn' then
-        protos.rnn = RNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.embeddings, opt.dropout)
+        protos.rnn = RNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.embeddings, opt.dropout, opt.hsm)
     elseif opt.model == 'scrnn' then
         protos.rnn = SCRNN.scrnn(vocab_size, opt.embeddings, opt.hidden_size, opt.context_size, opt.num_layers, opt.dropout)
     end
-    protos.criterion = nn.ClassNLLCriterion()
+    if opt.hsm ~= 0 then
+       print(loader:hsm_mapping():size())
+       protos.criterion = nn.HLogSoftMax(loader:hsm_mapping(), opt.embeddings)
+    else
+       protos.criterion = nn.ClassNLLCriterion()
+    end
 end
 
 -- the initial state of the cell/hidden states
@@ -294,13 +304,15 @@ function feval(x)
     tape:begin()
 
     local rnn_state = {[0] = init_state_local}
-    local predictions = {}           -- softmax outputs
+    local predictions = {}
     local loss = 0
     for t=1,x:size(2) do
         clones.rnn[t]:training() -- make sure we are in correct mode (this is cheap, sets flag)
         local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
         rnn_state[t] = {}
         for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end -- extract the state, without output
+      --   print(lst[#lst]:size())
+
         predictions[t] = lst[#lst] -- last element is the prediction
         loss = loss + clones.criterion[t]:forward(predictions[t], y[{{}, t}])
     end

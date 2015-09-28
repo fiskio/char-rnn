@@ -1,6 +1,6 @@
 local RNN = {}
 
-function RNN.rnn(input_size, rnn_size, n_layers, embeddings, dropout)
+function RNN.rnn(input_size, rnn_size, n_layers, embeddings, dropout, hsm)
 
   -- there are n+1 inputs (hiddens on each layer and x)
   local inputs = {}
@@ -34,12 +34,18 @@ function RNN.rnn(input_size, rnn_size, n_layers, embeddings, dropout)
 
     table.insert(outputs, next_h)
   end
--- set up the decoder
-  local top_h = outputs[#outputs]
-  if dropout > 0 then top_h = nn.Dropout(dropout)(top_h) end
-  local proj = nn.Linear(rnn_size, input_size)(top_h)
-  local logsoft = nn.LogSoftMax()(proj)
-  table.insert(outputs, logsoft)
+   -- set up the decoder
+   local top_h = outputs[#outputs]
+   if dropout > 0 then top_h = nn.Dropout(dropout)(top_h) end
+   local proj = nn.Linear(rnn_size, embeddings)(top_h)
+   -- HSM?
+   if hsm == 0 then
+      local final = nn.Linear(embeddings, input_size)(proj)
+      local logsoft = nn.LogSoftMax()(final)
+      table.insert(outputs, logsoft)
+   else
+      table.insert(outputs, proj)
+   end
 
   return nn.gModule(inputs, outputs)
 end
