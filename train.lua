@@ -11,9 +11,11 @@ require 'util.Squeeze'
 HSMClass = require 'util.HSMClass'
 local text = require 'text'
 local model_utils = require 'util.model_utils'
+local initialiser = require 'util.initialiser'
 local LSTM = require 'model.LSTM'
 local GRU = require 'model.GRU'
 local RNN = require 'model.RNN'
+local IRNN = require 'model.IRNN'
 local SCRNN = require 'model.SCRNN'
 
 cmd = torch.CmdLine()
@@ -33,7 +35,7 @@ cmd:option('-s3_output', '', 'S3 logs base location, / terminated')
 cmd:option('-hidden_size', 512, 'Size of recurrent internal state')
 cmd:option('-context_size', 128, 'Size of SCRNN context state')
 cmd:option('-num_layers', 1, 'Number of recurrent layers')
-cmd:option('-model', 'rnn', 'rnn | gru | lstm | scrnn')
+cmd:option('-model', 'rnn', 'rnn | irnn | gru | lstm | scrnn')
 cmd:option('-emb_size', 128, 'Size of word embeddings')
 cmd:option('-hsm', 0, 'HSM classes, 0 is off, -1 is sqrt(vocab)')
 cmd:option('-emb_sharing', true, 'Share the encoder/decoder matrices')
@@ -86,7 +88,7 @@ if opt.hsm ~= 0 and opt.emb_sharing then
    error('Sharing encoder/decoder matrices and HSM are incompatible!')
 end
 
--- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
+-- initialise cunn/cutorch for training on the GPU and fall back to CPU gracefully
 if opt.gpuid >= 0 and opt.opencl == 0 then
     local ok, cunn = pcall(require, 'cunn')
     local ok2, cutorch = pcall(require, 'cutorch')
@@ -104,7 +106,7 @@ if opt.gpuid >= 0 and opt.opencl == 0 then
     end
 end
 
--- initialize clnn/cltorch for training on the GPU and fall back to CPU gracefully
+-- initialise clnn/cltorch for training on the GPU and fall back to CPU gracefully
 if opt.gpuid >= 0 and opt.opencl == 1 then
     local ok, cunn = pcall(require, 'clnn')
     local ok2, cutorch = pcall(require, 'cltorch')
@@ -175,6 +177,8 @@ else
         protos.rnn = GRU.gru(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout)
     elseif opt.model == 'rnn' then
         protos.rnn = RNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
+    elseif opt.model == 'irnn' then
+        protos.rnn = IRNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
     elseif opt.model == 'scrnn' then
         protos.rnn = SCRNN.scrnn(vocab_size, opt.emb_size, opt.hidden_size, opt.context_size, opt.num_layers, opt.dropout)
     end
@@ -220,10 +224,14 @@ else
 end
 print('Total number of parameters in the model: ' .. params:nElement())
 
--- initialization
+-- initialisation
 if do_random_init then
-   -- TODO improve initialisation
-   params:uniform(-0.08, 0.08) -- small numbers uniform
+   print('Initialising network weights')
+   -- params:uniform(-0.08, 0.08) -- small numbers uniform
+   initialiser.initialise_network(protos.rnn, opt.model=='irnn')
+   if opt.hsm ~= 0 then
+      initialiser.initialise_network(protos.criterion, opt.model=='irnn')
+   end
 end
 
 -- make a bunch of clones after flattening, as that reallocates memory
@@ -240,9 +248,8 @@ function eval_split()
     loader:reset_batch_pointer(loader:valid_batches()) -- reset validation batch pointer
     local loss = 0
     xlua.progress(1,n)
-    --local rnn_state
-
-    for i = 1,n do -- iterate over batches in the split
+    -- iterate over batches in the split
+    for i = 1,n do
         -- fetch a batch
         local x, y = loader:next_batch(loader:valid_batches())
         local init_state_local = {}
@@ -423,7 +430,7 @@ for i = 1, iterations do
         print(string.format("%d/%d (epoch %.3f), perplexity = %6.2f, grad/param norm = %6.4e, tokens/sec = %.f", i, iterations, epoch, train_ppl, grad_params:norm() / params:norm(), avg_ts))
     end
 
-    if i % 10 == 0 then collectgarbage() end
+    if i % 100 == 0 then collectgarbage() end
 
     -- handle early stopping if things are going really bad
     if loss[1] ~= loss[1] then
@@ -431,7 +438,7 @@ for i = 1, iterations do
         break -- halt
     end
     if loss0 == nil then loss0 = loss[1] end
-    if loss[1] > loss0 * 3 then
+    if loss[1] > loss0 * 5 then
         print('Loss is exploding, aborting.')
         break -- halt
     end
