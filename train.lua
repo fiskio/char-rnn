@@ -316,6 +316,7 @@ function feval(x)
     local rnn_state = {[0] = init_state_local}
     local predictions = {}
     local loss = 0
+    local ts_timer = torch.Timer()
     for t=1,x:size(2) do
         clones.rnn[t]:training() -- make sure we are in correct mode (this is cheap, sets flag)
         local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
@@ -334,6 +335,9 @@ function feval(x)
     -- clip gradient element-wise
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
     -- TODO renorm?
+    -- get average token/seconds
+    local curr_ts = x:nElement() / ts_timer:time().real
+    avg_ts = avg_ts and 0.99 * avg_ts + 0.01 * curr_ts or curr_ts
     return loss, grad_params
 end
 
@@ -431,7 +435,7 @@ for i = 1, iterations do
     end
 
     if i % opt.print_every == 0 then
-        print(string.format("%d/%d (epoch %.3f), perplexity = %6.2f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_ppl, grad_params:norm() / params:norm(), time))
+        print(string.format("%d/%d (epoch %.3f), perplexity = %6.2f, grad/param norm = %6.4e, tokens/sec = %.f", i, iterations, epoch, train_ppl, grad_params:norm() / params:norm(), avg_ts))
     end
 
     if i % 10 == 0 then collectgarbage() end
