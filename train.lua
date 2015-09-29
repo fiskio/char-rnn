@@ -57,7 +57,7 @@ cmd:option('-adadelta_rho', 0.95, 'ADADELTA interpolation parameter')
 cmd:option('-batch_size', 64, 'Number of sequences to train on in parallel')
 cmd:option('-max_epochs', 50, 'Total number of full passes through the training data')
 cmd:option('-max_valids', 100, 'Total number of evaluations, kind of max_epochs')
-cmd:option('-grad_clip', 5, 'Clip gradients at this value')
+cmd:option('-grad_max_norm', 5, 'Renorm gradients at this value')
 cmd:option('-init_from', '', 'Initialize network parameters from checkpoint at this path')
 -- bookkeeping
 cmd:option('-seed', 42, 'Seed for random number generator, for repeatable experiments')
@@ -339,9 +339,15 @@ function feval(x)
     ------------------------ misc ----------------------
     -- TODO pass on final context state to next batch in SCRNN
 
-    -- clip gradient element-wise
-    grad_params:clamp(-opt.grad_clip, opt.grad_clip)
-    -- TODO renorm?
+    -- clip gradients
+    -- grad_params:clamp(-opt.grad_max_norm, opt.grad_max_norm)
+
+    -- renorm gradients
+    local gp_norm = grad_params:norm()
+    if gp_norm > opt.grad_max_norm then
+       grad_params:mul(opt.grad_max_norm / gp_norm)
+       -- print(string.format('grads renorm: %.2f -> %.2f', gp_norm, grad_params:norm()))
+    end
     -- get average token/seconds
     local curr_ts = x:nElement() / ts_timer:time().real
     avg_ts = avg_ts and 0.99 * avg_ts + 0.01 * curr_ts or curr_ts
