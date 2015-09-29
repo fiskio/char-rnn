@@ -32,12 +32,12 @@ function M.initialise_weights(module, relu)
    else
       M.glorot_init(weights, relu)
    end
-   print(module.weight)
+   --print(module.weight)
 end
 
 function M.initialise_biases(module)
    module.bias:zero()
-   print(module.bias)
+   --print(module.bias)
 end
 
 function M.initialise_network(model, relu)
