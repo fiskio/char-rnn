@@ -56,6 +56,7 @@ cmd:option('-adam_lambda', 1e-8, 'ADAM first moment decay')
 cmd:option('-adadelta_rho', 0.95, 'ADADELTA interpolation parameter')
 cmd:option('-batch_size', 64, 'Number of sequences to train on in parallel')
 cmd:option('-max_epochs', 50, 'Total number of full passes through the training data')
+cmd:option('-max_valids', 100, 'Total number of evaluations, kind of max_epochs')
 cmd:option('-grad_clip', 5, 'Clip gradients at this value')
 cmd:option('-init_from', '', 'Initialize network parameters from checkpoint at this path')
 -- bookkeeping
@@ -379,6 +380,7 @@ local iterations = opt.max_epochs * #loader._train_batches
 local iterations_per_epoch = loader.ntrain
 local loss0 = nil
 local best_ppl = nil
+local total_valids = 0
 for i = 1, iterations do
     local epoch = i / #loader._train_batches
 
@@ -414,6 +416,12 @@ for i = 1, iterations do
           if opt.s3_output ~= '' then
              print(string.format('Syncronising local log directory %s to S3 %s', opt.logs_dir, opt.s3_output))
              os.execute(string.format('aws s3 sync %s %s', opt.logs_dir, opt.s3_output..opt.ds_name..'/'..exp_time))
+          end
+          -- all done?
+          total_valids = total_valids + 1
+          if total_valids == opt.max_valids then
+             print('Reached the end of the journey, hope you enjoyed!')
+             os.exit()
           end
        end
        -- reduce the learning rate?
