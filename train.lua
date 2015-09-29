@@ -304,7 +304,6 @@ function feval(x)
         params:copy(x)
     end
     grad_params:zero()
-
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(loader._train_batches)
     local init_state_local = {}
@@ -323,12 +322,9 @@ function feval(x)
         y = y:cl()
         for i,s in ipairs(init_state_local) do init_state_local[i] = s:cuda() end
     end
-
-    local tape = autobw.Tape()
-
     ------------------- forward pass -------------------
+    local tape = autobw.Tape()
     tape:begin()
-
     local rnn_state = {[0] = init_state_local}
     local predictions = {}
     local loss = 0
@@ -341,27 +337,22 @@ function feval(x)
         loss = loss + clones.criterion[t]:forward(lst[#lst], y[{{}, t}])
     end
     loss = loss / x:size(2)
-
     tape:stop()
     ------------------ backward pass -------------------
     tape:backward()
     ------------------------ misc ----------------------
-    -- TODO pass on final context state to next batch in SCRNN
-
     -- clip gradients
     -- grad_params:clamp(-opt.grad_max_norm, opt.grad_max_norm)
-
     -- renorm gradients
     local gp_norm = grad_params:norm()
     if gp_norm > opt.grad_max_norm then
        grad_params:mul(opt.grad_max_norm / gp_norm)
        -- print(string.format('grads renorm: %.2f -> %.2f', gp_norm, grad_params:norm()))
     end
-
     -- get average token/seconds
     local curr_ts = x:nElement() / ts_timer:time().real
     avg_ts = avg_ts and 0.99 * avg_ts + 0.01 * curr_ts or curr_ts
-
+    -- TODO pass on final context state to next batch in SCRNN
     return loss, grad_params
 end
 
@@ -400,15 +391,13 @@ local best_ppl = nil
 local total_valids = 0
 -- TRAIN loop
 for i = 1, iterations do
-    local epoch = i / #loader._train_batches
-
     local timer = torch.Timer()
+    local epoch = i / #loader:train_batches()
     local _, loss = optim_algo(feval, params, optim_state)
     local time = timer:time().real
-
+    -- save ppls
     train_ppl = math.exp(loss[1]) -- the loss is inside a list, pop it
     train_ppls[i] = train_ppl
-
     -- every now and then or on last iteration
     if i % opt.eval_val_every == 0 or i == iterations then
        -- evaluate loss on validation data
@@ -454,24 +443,24 @@ for i = 1, iterations do
           end
        end
     end
-
+    -- print train stats?
     if i % opt.print_every == 0 then
        print(string.format("%d/%d (epoch %.3f), perplexity = %6.2f, grad/param norm = %6.4e, tokens/sec = %.f", i, iterations, epoch, train_ppl, grad_params:norm() / params:norm(), avg_ts))
        -- plot?
        train_logger:add{train_ppl}
        if opt.plot then train_logger:plot() end
     end
-
-    if i % 100 == 0 then collectgarbage() end
-
     -- handle early stopping if things are going really bad
     if loss[1] ~= loss[1] then
         print('Loss is NaN.  This usually indicates a bug.  Please check the issues page for existing issues, or create a new issue, if none exist.  Ideally, please state: your operating system, 32-bit/64-bit, your blas version, cpu/cuda/cl?')
         break -- halt
     end
+    -- loss exploding?
     if loss0 == nil then loss0 = loss[1] end
     if loss[1] > loss0 * 5 then
         print('Loss is exploding, aborting.')
         break -- halt
     end
+    -- gc
+    if i % 100 == 0 then collectgarbage() end
 end
