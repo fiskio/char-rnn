@@ -73,7 +73,7 @@ cmd:option('-init_from', '', 'Initialize network parameters from checkpoint at t
 cmd:option('-seed', 42, 'Seed for random number generator, for repeatable experiments')
 cmd:option('-print_every', 10, 'How many steps/minibatches between printing out the loss?')
 cmd:option('-eval_val_every', 1e3, 'How many iterations between evaluating on validation data?')
-cmd:option('-checkpoint_dir', 'logs', 'Output root directory for experiment logs')
+cmd:option('-logs_dir', 'logs', 'Output root directory for experiment logs')
 cmd:option('-savefile', '', 'Filename to autosave the checkpont to. Will be inside logs/')
 -- GPU/CPU
 cmd:option('-gpuid', 0, 'Which gpu to use, -1 = use CPU')
@@ -82,6 +82,12 @@ cmd:text()
 
 -- parse input params
 opt = cmd:parse(arg)
+
+-- print parmas
+print('Parameters:')
+print(opt)
+
+-- seed
 torch.manualSeed(opt.seed)
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
@@ -131,9 +137,10 @@ local loader = Text{
                }
 local vocab_size = loader._vocab_size  -- the number of distinct characters
 local vocab = loader._word2class
-print('vocab size: ' .. vocab_size)
--- make sure output directory exists
-if not path.exists(opt.checkpoint_dir) then lfs.mkdir(opt.checkpoint_dir) end
+--TODO print a 'text summary'
+--
+-- make sure log directory exists
+if not path.exists(opt.logs_dir) then lfs.mkdir(opt.logs_dir) end
 
 -- define the model: prototypes for one timestep, then clone them in time
 local do_random_init = true
@@ -168,7 +175,6 @@ else
     end
     -- HSM?
     if opt.hsm ~= 0 then
-       print(loader:hsm_mapping():size())
        protos.criterion = nn.HLogSoftMax(loader:hsm_mapping(), opt.hidden_size)
     else
        protos.criterion = nn.ClassNLLCriterion()
@@ -201,8 +207,13 @@ if opt.gpuid >= 0 and opt.opencl == 1 then
     for k,v in pairs(protos) do v:cl() end
 end
 
--- put the above things into one flattened parameters tensor
-params, grad_params = model_utils.combine_all_parameters(protos.rnn, protos.criterion)
+-- put everything into one flattened parameters tensor
+if opt.hsm == 0 then
+   params, grad_params = model_utils.combine_all_parameters(protos.rnn)
+else
+   params, grad_params = model_utils.combine_all_parameters(protos.rnn, protos.criterion)
+end
+print('Total number of parameters in the model: ' .. params:nElement())
 
 -- initialization
 if do_random_init then
@@ -210,22 +221,18 @@ if do_random_init then
    params:uniform(-0.08, 0.08) -- small numbers uniform
 end
 
-print('number of parameters in the model: ' .. params:nElement())
 -- make a bunch of clones after flattening, as that reallocates memory
 clones = {}
-for name,proto in pairs(protos) do
-    print('cloning ' .. name)
+for name, proto in pairs(protos) do
+    print(string.format('Cloning %s %s times', name, opt.seq_length+1))
     -- seq_length + 1 because Text prepends start of sequence token
     clones[name] = model_utils.clone_many_times(proto, opt.seq_length+1, not proto.parameters)
 end
 
--- evaluate the loss over an entire split
-function eval_split(split_index, max_batches)
-    --print('evaluating loss over split index ' .. split_index)
+-- evaluate the loss over on validation set
+function eval_split()
     local n = #loader._valid_batches
-    if max_batches ~= nil then n = math.min(max_batches, n) end
-
-    loader:reset_batch_pointer(loader:valid_batches()) -- move batch iteration pointer for this split to front
+    loader:reset_batch_pointer(loader:valid_batches()) -- reset validation batch pointer
     local loss = 0
     xlua.progress(1,n)
     --local rnn_state
@@ -238,7 +245,7 @@ function eval_split(split_index, max_batches)
            init_state_local[i] = torch.zeros(x:size(1), t:size(2))
         end
          if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
-            -- have to convert to float because integers can't be cuda()'d
+            -- have to convert to float because integers can't be cuda()
             x = x:float():cuda()
             y = y:float():cuda()
             for i,s in ipairs(init_state_local) do init_state_local[i] = s:cuda() end
@@ -318,7 +325,8 @@ function feval(x)
     tape:backward()
     ------------------------ misc ----------------------
     -- transfer final state to initial state (BPTT)
-    -- init_state_global = rnn_state[#rnn_state] -- NOTE: I don't think this needs to be a clone, right?
+    -- TODO pass on context state in SCRNN
+    -- init_state_global = rnn_state[#rnn_state]
     -- clip gradient element-wise
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
     -- TODO renorm?
@@ -349,6 +357,7 @@ local optim_states = {
 
 local optim_state = optim_states[opt.optim] or error('Unrecognised optim algorithm:'..opt.optim)
 local optim_algo = optim[opt.optim]
+print('Optimisation:')
 print(opt.optim, optim_state)
 
 local iterations = opt.max_epochs * #loader._train_batches
@@ -381,7 +390,7 @@ for i = 1, iterations do
         local val_loss = math.exp(eval_split(loader:valid_batches()))
         val_losses[i] = val_loss
 
-        local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', opt.checkpoint_dir, opt.savefile, epoch, val_loss)
+        local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', opt.logs_dir, opt.savefile, epoch, val_loss)
         print('saving checkpoint to ' .. savefile)
         local checkpoint = {}
         checkpoint.protos = protos
