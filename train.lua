@@ -37,7 +37,7 @@ cmd:option('-emb_size', 128, 'Size of word embeddings')
 cmd:option('-hsm', 0, 'HSM classes, 0 is off, -1 is sqrt(vocab)')
 cmd:option('-emb_sharing', true, 'Share the encoder/decoder matrices')
 -- optimization
-cmd:option('-optim', 'rmsprop', 'Optimisation algorithm')
+cmd:option('-optim', 'adam', 'Optimisation algorithm')
 cmd:option('-learning_rate', 1e-3, 'Initial learning rate')
 cmd:option('-learning_rate_decay' ,0.9, 'Learning rate decay factor')
 cmd:option('-ppl_tolerance', 5, 'Maximum difference between current PPL and best, triggers decaying')
@@ -50,7 +50,7 @@ cmd:option('-rmsprop_alpha', 0.99,'RMSprop smoothing constant')
 cmd:option('-rmsprop_epsilon', 1e-8, 'RMSprop epsilon')
 cmd:option('-adam_beta1', 0.9, 'ADAM first moment coefficient')
 cmd:option('-adam_beta2', 0.999, 'ADAM second moment coefficient')
-cmd:option('-adam_lambda', 1-1e-8, 'ADAM first moment decay')
+cmd:option('-adam_lambda', 1e-8, 'ADAM first moment decay')
 cmd:option('-adadelta_rho', 0.95, 'ADADELTA interpolation parameter')
 cmd:option('-batch_size', 64, 'Number of sequences to train on in parallel')
 cmd:option('-max_epochs', 50, 'Total number of full passes through the training data')
@@ -346,7 +346,8 @@ local optim_states = {
                 epsilon      = opt.rmsprop_epsilon },
    adagrad  = { learningRate      = opt.learning_rate,
                 learningRateDecay = opt.learning_rate_decay },
-   adam     = { beta1  = opt.adam_beta1,
+   adam     = { learningRate = opt.learning_rate,
+                beta1  = opt.adam_beta1,
                 beta2  = opt.adam_beta2,
                 lambda = opt.adam_lambda },
    adadelta = { rho = opt.adadelta_rho },
@@ -396,7 +397,7 @@ for i = 1, iterations do
        -- evaluate loss on validation data
        local val_ppl = math.exp(eval_split(loader:valid_batches()))
        val_ppls[i] = val_ppl
-       print('Evaluation perplexity: '..val_ppl)
+       print('Evaluation PPL: '..val_ppl)
        -- best model? -> save!
        if best_ppl == nil or val_ppl < best_ppl then
           best_ppl = val_ppl
