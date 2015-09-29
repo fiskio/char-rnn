@@ -28,6 +28,7 @@ cmd:option('-vocab_size', 1e4, 'Number of words in the dictionary')
 cmd:option('-seq_length', 50, 'Maximum number of tokens in a sentence')
 cmd:option('-max_reps', 5, 'Maximum number of repeated tokens per line')
 cmd:option('-s3_input', '', 'S3 dataset base location, / terminated')
+cmd:option('-s3_output', '', 'S3 logs base location, / terminated')
 -- model params
 cmd:option('-hidden_size', 512, 'Size of recurrent internal state')
 cmd:option('-context_size', 128, 'Size of SCRNN context state')
@@ -413,6 +414,11 @@ for i = 1, iterations do
           checkpoint.epoch = epoch
           checkpoint.vocab = loader._word2class
           torch.save(savefile, checkpoint)
+          -- upload to S3?
+          if opt.s3_output ~= '' then
+             print(string.format('Syncronising local log directory %s to S3 %s', opt.logs_dir, opt.s3_output))
+             os.execute(string.format('aws s3 sync %s %s', opt.logs_dir, opt.s3_output..opt.ds_name..'/'..exp_time))
+          end
        end
        -- reduce the learning rate?
        if best_ppl and (val_ppl - best_ppl) > opt.ppl_tolerance then
