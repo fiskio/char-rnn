@@ -53,20 +53,20 @@ cmd:option('-emb_sharing', true, 'Share the encoder/decoder matrices')
 -- optimization
 cmd:option('-optim', 'rmsprop', 'Optimisation algorithm')
 cmd:option('-learning_rate', 1e-3, 'Initial learning rate')
-cmd:option('-learning_rate_decay' ,0.95, 'learning rate decay factor')
--- TODO halve instead
-cmd:option('-learning_rate_decay_after',25,'in number of epochs, when to start decaying the learning rate')
+cmd:option('-learning_rate_decay' ,0.95, 'Learning rate decay factor')
+cmd:option('-ppl_tolerance', 5, 'Maximum difference between current PPL and best, triggers decaying')
+--cmd:option('-learning_rate_decay_after',25,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-dropout', 0.5,'Dropout for regularization, 0 = no dropout')
 cmd:option('-sgd_weight_decay', 0, 'SGD weight decay or L2 regularisation')
 cmd:option('-sgd_momentum', 0, 'SGD momentum')
 cmd:option('-sgd_momentum_nesterov', false, 'SGD, use nesterov momentum')
-cmd:option('-rmsprop_alpha', 0.99,'smoothing constant')
+cmd:option('-rmsprop_alpha', 0.99,'RMSprop smoothing constant')
 cmd:option('-rmsprop_epsilon', 1e-8, 'RMSprop epsilon')
 cmd:option('-adam_beta1', 0.9, 'ADAM first moment coefficient')
 cmd:option('-adam_beta2', 0.999, 'ADAM second moment coefficient')
 cmd:option('-adam_lambda', 1-1e-8, 'ADAM first moment decay')
 cmd:option('-adadelta_rho', 0.95, 'ADADELTA interpolation parameter')
-cmd:option('-batch_size', 32, 'Number of sequences to train on in parallel')
+cmd:option('-batch_size', 64, 'Number of sequences to train on in parallel')
 cmd:option('-max_epochs', 50, 'Total number of full passes through the training data')
 cmd:option('-grad_clip', 5, 'Clip gradients at this value')
 cmd:option('-init_from', '', 'Initialize network parameters from checkpoint at this path')
@@ -75,7 +75,6 @@ cmd:option('-seed', 42, 'Seed for random number generator, for repeatable experi
 cmd:option('-print_every', 10, 'How many steps/minibatches between printing out the loss?')
 cmd:option('-eval_val_every', 1e3, 'How many iterations between evaluating on validation data?')
 cmd:option('-logs_dir', 'logs', 'Output root directory for experiment logs')
-cmd:option('-savefile', '', 'Filename to autosave the checkpont to. Will be inside logs/')
 -- GPU/CPU
 cmd:option('-gpuid', 0, 'Which gpu to use, -1 = use CPU')
 cmd:option('-opencl', 0, 'Use OpenCL (instead of CUDA)')
@@ -83,6 +82,11 @@ cmd:text()
 
 -- parse input params
 opt = cmd:parse(arg)
+
+-- unique logs_dir
+exp_time = os.date('%Y.%m.%d_%H.%M')
+opt.logs_dir = paths.concat(opt.logs_dir, exp_time)
+paths.mkdir(opt.logs_dir)
 
 -- print parmas
 print('Parameters:')
@@ -100,10 +104,10 @@ end
 if opt.gpuid >= 0 and opt.opencl == 0 then
     local ok, cunn = pcall(require, 'cunn')
     local ok2, cutorch = pcall(require, 'cutorch')
-    if not ok then print('package cunn not found!') end
-    if not ok2 then print('package cutorch not found!') end
+    if not ok then print('Package cunn not found!') end
+    if not ok2 then print('Package cutorch not found!') end
     if ok and ok2 then
-        print('using CUDA on GPU ' .. opt.gpuid .. '...')
+        print('Using CUDA on GPU ' .. opt.gpuid .. '...')
         cutorch.setDevice(opt.gpuid + 1) -- note +1 to make it 0 indexed! sigh lua
         cutorch.manualSeed(opt.seed)
     else
@@ -118,10 +122,10 @@ end
 if opt.gpuid >= 0 and opt.opencl == 1 then
     local ok, cunn = pcall(require, 'clnn')
     local ok2, cutorch = pcall(require, 'cltorch')
-    if not ok then print('package clnn not found!') end
-    if not ok2 then print('package cltorch not found!') end
+    if not ok then print('Package clnn not found!') end
+    if not ok2 then print('Package cltorch not found!') end
     if ok and ok2 then
-        print('using OpenCL on GPU ' .. opt.gpuid .. '...')
+        print('Using OpenCL on GPU ' .. opt.gpuid .. '...')
         cltorch.setDevice(opt.gpuid + 1) -- note +1 to make it 0 indexed! sigh lua
         torch.manualSeed(opt.seed)
     else
@@ -151,7 +155,7 @@ if not path.exists(opt.logs_dir) then lfs.mkdir(opt.logs_dir) end
 -- define the model: prototypes for one timestep, then clone them in time
 local do_random_init = true
 if string.len(opt.init_from) > 0 then
-    print('loading an LSTM from checkpoint ' .. opt.init_from)
+    print('Loading an LSTM from checkpoint ' .. opt.init_from)
     local checkpoint = torch.load(opt.init_from)
     protos = checkpoint.protos
     -- make sure the vocabs are the same
@@ -161,14 +165,14 @@ if string.len(opt.init_from) > 0 then
             vocab_compatible = false
         end
     end
-    assert(vocab_compatible, 'error, the character vocabulary for this dataset and the one in the saved checkpoint are not the same. This is trouble.')
+    assert(vocab_compatible, 'Error, the character vocabulary for this dataset and the one in the saved checkpoint are not the same. This is trouble.')
     -- overwrite model settings based on checkpoint to ensure compatibility
-    print('overwriting hidden_size=' .. checkpoint.opt.hidden_size .. ', num_layers=' .. checkpoint.opt.num_layers .. ' based on the checkpoint.')
+    print('Overwriting hidden_size=' .. checkpoint.opt.hidden_size .. ', num_layers=' .. checkpoint.opt.num_layers .. ' based on the checkpoint.')
     opt.hidden_size = checkpoint.opt.hidden_size
     opt.num_layers = checkpoint.opt.num_layers
     do_random_init = false
 else
-    print('creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
+    print('Creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
     protos = {}
     if opt.model == 'lstm' then
         protos.rnn = LSTM.lstm(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout)
@@ -340,8 +344,8 @@ function feval(x)
 end
 
 -- start optimization here
-train_losses = {}
-val_losses = {}
+train_ppls = {}
+val_ppls = {}
 
 local optim_states = {
    rmsprop  = { learningRate = opt.learning_rate,
@@ -369,6 +373,7 @@ print(opt.optim, optim_state)
 local iterations = opt.max_epochs * #loader._train_batches
 local iterations_per_epoch = loader.ntrain
 local loss0 = nil
+local best_ppl = nil
 for i = 1, iterations do
     local epoch = i / #loader._train_batches
 
@@ -376,54 +381,69 @@ for i = 1, iterations do
     local _, loss = optim_algo(feval, params, optim_state)
     local time = timer:time().real
 
-    local train_loss = math.exp(loss[1]) -- the loss is inside a list, pop it
-    train_losses[i] = train_loss
+    local train_ppl = math.exp(loss[1]) -- the loss is inside a list, pop it
+    train_ppls[i] = train_ppl
 
+    --[[
     -- exponential learning rate decay
     if i % #loader._train_batches == 0 and opt.learning_rate_decay < 1 then
         if epoch >= opt.learning_rate_decay_after then
             local decay_factor = opt.learning_rate_decay
             if optim_state.learningRate then
                optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
-               print('decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
+               print('Decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
             end
         end
     end
+    --]]
 
     -- every now and then or on last iteration
     if i % opt.eval_val_every == 0 or i == iterations then
-        -- evaluate loss on validation data
-        local val_loss = math.exp(eval_split(loader:valid_batches()))
-        val_losses[i] = val_loss
-
-        local savefile = string.format('%s/lm_%s_epoch%.2f_%.4f.t7', opt.logs_dir, opt.savefile, epoch, val_loss)
-        print('saving checkpoint to ' .. savefile)
-        local checkpoint = {}
-        checkpoint.protos = protos
-        checkpoint.opt = opt
-        checkpoint.train_losses = train_losses
-        checkpoint.val_loss = val_loss
-        checkpoint.val_losses = val_losses
-        checkpoint.i = i
-        checkpoint.epoch = epoch
-        checkpoint.vocab = loader._word2class
-        torch.save(savefile, checkpoint)
+       -- evaluate loss on validation data
+       local val_ppl = math.exp(eval_split(loader:valid_batches()))
+       val_ppls[i] = val_ppl
+       print('Evaluation perplexity: '..val_ppl)
+       -- best model? -> save!
+       if best_ppl == nil or val_ppl < best_ppl then
+          best_ppl = val_ppl
+          local savefile = paths.concat(opt.logs_dir, string.format('model_%s.t7', exp_time))
+          print('Saving checkpoint to ' .. savefile)
+          local checkpoint = {}
+          checkpoint.protos = protos
+          checkpoint.opt = opt
+          checkpoint.train_ppls = train_ppls
+          checkpoint.val_ppl = val_ppl
+          checkpoint.val_losses = val_pples
+          checkpoint.i = i
+          checkpoint.epoch = epoch
+          checkpoint.vocab = loader._word2class
+          torch.save(savefile, checkpoint)
+       end
+       -- anneal the learning rate?
+       if best_ppl and (val_ppl - best_ppl) > opt.ppl_tolerance then
+          if optim_state.learningRate then
+             local new_lr = optim_state.learningRate * opt.learning_rate_decay
+             print(string.format('PPL not dropping! %.2f >> %.2f, reducing learning rate: %s -> %s', val_ppl, best_ppl, optim_state.learningRate, new_lr))
+             optim_state.learningRate = new_lr
+          end
+       end
     end
 
     if i % opt.print_every == 0 then
-        print(string.format("%d/%d (epoch %.3f), perplexity = %6.2f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_loss, grad_params:norm() / params:norm(), time))
+        print(string.format("%d/%d (epoch %.3f), perplexity = %6.2f, grad/param norm = %6.4e, time/batch = %.2fs", i, iterations, epoch, train_ppl, grad_params:norm() / params:norm(), time))
     end
 
     if i % 10 == 0 then collectgarbage() end
 
     -- handle early stopping if things are going really bad
     if loss[1] ~= loss[1] then
-        print('loss is NaN.  This usually indicates a bug.  Please check the issues page for existing issues, or create a new issue, if none exist.  Ideally, please state: your operating system, 32-bit/64-bit, your blas version, cpu/cuda/cl?')
+        print('Loss is NaN.  This usually indicates a bug.  Please check the issues page for existing issues, or create a new issue, if none exist.  Ideally, please state: your operating system, 32-bit/64-bit, your blas version, cpu/cuda/cl?')
+
         break -- halt
     end
     if loss0 == nil then loss0 = loss[1] end
     if loss[1] > loss0 * 3 then
-        print('loss is exploding, aborting.')
+        print('Loss is exploding, aborting.')
         break -- halt
     end
 end
