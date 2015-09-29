@@ -42,7 +42,6 @@ cmd:option('-optim', 'adam', 'Optimisation algorithm')
 cmd:option('-learning_rate', 1e-3, 'Initial learning rate')
 cmd:option('-learning_rate_decay' ,0.9, 'Learning rate decay factor')
 cmd:option('-ppl_tolerance', 5, 'Maximum difference between current PPL and best, triggers decaying')
---cmd:option('-learning_rate_decay_after',25,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-dropout', 0.5,'Dropout for regularization, 0 = no dropout')
 cmd:option('-sgd_weight_decay', 0, 'SGD weight decay or L2 regularisation')
 cmd:option('-sgd_momentum', 0, 'SGD momentum')
@@ -382,20 +381,6 @@ for i = 1, iterations do
 
     local train_ppl = math.exp(loss[1]) -- the loss is inside a list, pop it
     train_ppls[i] = train_ppl
-
-    --[[
-    -- TODO in or out? PPL tolerance might be sufficient
-    -- exponential learning rate decay
-    if i % #loader._train_batches == 0 and opt.learning_rate_decay < 1 then
-        if epoch >= opt.learning_rate_decay_after then
-            local decay_factor = opt.learning_rate_decay
-            if optim_state.learningRate then
-               optim_state.learningRate = optim_state.learningRate * decay_factor -- decay it
-               print('Decayed learning rate by a factor ' .. decay_factor .. ' to ' .. optim_state.learningRate)
-            end
-        end
-    end
-    --]]
 
     -- every now and then or on last iteration
     if i % opt.eval_val_every == 0 or i == iterations then
