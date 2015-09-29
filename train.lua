@@ -22,10 +22,12 @@ cmd:text('Train a recurrent language model')
 cmd:text()
 cmd:text('Options')
 -- data
-cmd:option('-data_dir','data/ptb','data directory')
+cmd:option('-data_dir','data','data directory')
+cmd:option('-ds_name', 'ptb', 'dataset name')
 cmd:option('-vocab_size', 1e4, 'Number of words in the dictionary')
 cmd:option('-seq_length', 50, 'Maximum number of tokens in a sentence')
 cmd:option('-max_reps', 5, 'Maximum number of repeated tokens per line')
+cmd:option('-s3_input', '', 'S3 dataset base location, / terminated')
 -- model params
 cmd:option('-hidden_size', 512, 'Size of recurrent internal state')
 cmd:option('-context_size', 128, 'Size of SCRNN context state')
@@ -69,7 +71,7 @@ opt = cmd:parse(arg)
 
 -- unique logs_dir
 exp_time = os.date('%Y.%m.%d_%H.%M')
-opt.logs_dir = paths.concat(opt.logs_dir, exp_time)
+opt.logs_dir = paths.concat(opt.logs_dir, opt.ds_name, exp_time)
 paths.mkdir(opt.logs_dir)
 
 -- print parmas
@@ -120,10 +122,20 @@ if opt.gpuid >= 0 and opt.opencl == 1 then
     end
 end
 
+-- fetch dataset from S3?
+if opt.s3_input ~= '' then
+   -- is it there?
+   local found = sys.execute(string.format('aws s3 ls %s', opt.s3_input..opt.ds_name)) ~= ''
+   if not found then error(string.format('Could not find datasest %s at location %s', opt.ds_name, opt.s3_input)) end
+   -- sync it
+   os.execute(string.format('aws s3 sync %s %s', opt.s3_input..opt.ds_name, paths.concat(opt.data_dir, opt.ds_name)))
+   print(string.format('Dataset sychronised from S3, local directory: %s', paths.concat(opt.data_dir, opt.ds_name)))
+end
+
 -- create the Text loader class
 local loader = Text{
-                  name = paths.basename(opt.data_dir),
-                  data_path = paths.dirname(opt.data_dir),
+                  name = opt.ds_name,
+                  data_path = opt.data_dir,
                   vocab_size = opt.vocab_size,
                   batch_size = opt.batch_size,
                   max_length = opt.seq_length,
@@ -136,6 +148,7 @@ local vocab = loader._word2class
 -- define the model: prototypes for one timestep, then clone them in time
 local do_random_init = true
 if string.len(opt.init_from) > 0 then
+    -- load previous model
     print('Loading an LSTM from checkpoint ' .. opt.init_from)
     local checkpoint = torch.load(opt.init_from)
     protos = checkpoint.protos
@@ -146,14 +159,15 @@ if string.len(opt.init_from) > 0 then
             vocab_compatible = false
         end
     end
-    assert(vocab_compatible, 'Error, the character vocabulary for this dataset and the one in the saved checkpoint are not the same. This is trouble.')
+    assert(vocab_compatible, 'Error, the vocabulary for this dataset and the one in the saved checkpoint are not the same. This is trouble.')
     -- overwrite model settings based on checkpoint to ensure compatibility
     print('Overwriting hidden_size=' .. checkpoint.opt.hidden_size .. ', num_layers=' .. checkpoint.opt.num_layers .. ' based on the checkpoint.')
     opt.hidden_size = checkpoint.opt.hidden_size
     opt.num_layers = checkpoint.opt.num_layers
     do_random_init = false
 else
-    print('Creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
+    -- create new recurrent model prototype
+    print(string.format('Creating a %s model with %s layers', opt.model, opt.num_layers))
     protos = {}
     if opt.model == 'lstm' then
         protos.rnn = LSTM.lstm(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout)
@@ -399,7 +413,7 @@ for i = 1, iterations do
           checkpoint.vocab = loader._word2class
           torch.save(savefile, checkpoint)
        end
-       -- anneal the learning rate?
+       -- reduce the learning rate?
        if best_ppl and (val_ppl - best_ppl) > opt.ppl_tolerance then
           if optim_state.learningRate then
              local new_lr = optim_state.learningRate * opt.learning_rate_decay
