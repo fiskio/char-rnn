@@ -9,14 +9,15 @@ require 'util.HLogSoftMax'
 require 'util.Squeeze'
 
 HSMClass = require 'util.HSMClass'
-local text = require 'text'
-local model_utils = require 'util.model_utils'
-local initialiser = require 'util.initialiser'
-local LSTM = require 'model.LSTM'
-local GRU = require 'model.GRU'
-local RNN = require 'model.RNN'
-local IRNN = require 'model.IRNN'
-local SCRNN = require 'model.SCRNN'
+LSM = require 'model.LSM'
+text = require 'text'
+model_utils = require 'util.model_utils'
+initialiser = require 'util.initialiser'
+LSTM = require 'model.LSTM'
+GRU = require 'model.GRU'
+RNN = require 'model.RNN'
+IRNN = require 'model.IRNN'
+SCRNN = require 'model.SCRNN'
 
 cmd = torch.CmdLine()
 cmd:text()
@@ -182,15 +183,16 @@ else
    print(string.format('Creating a %s model with %s layers', opt.model, opt.num_layers))
    protos = {}
    if opt.model == 'lstm' then
-      protos.rnn = LSTM.lstm(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout)
+      protos.rnn = LSTM.lstm(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
    elseif opt.model == 'gru' then
-      protos.rnn = GRU.gru(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout)
+      protos.rnn = GRU.gru(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
    elseif opt.model == 'rnn' then
       protos.rnn = RNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
    elseif opt.model == 'irnn' then
       protos.rnn = IRNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
    elseif opt.model == 'scrnn' then
-      protos.rnn = SCRNN.scrnn(vocab_size, opt.emb_size, opt.hidden_size, opt.context_size, opt.num_layers, opt.dropout)
+      print(opt.context_size)
+      protos.rnn = SCRNN.scrnn(vocab_size, opt.hidden_size, opt.context_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
    end
    -- HSM?
    if opt.hsm ~= 0 then

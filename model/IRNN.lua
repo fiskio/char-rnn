@@ -32,28 +32,10 @@ function IRNN.rnn(input_size, rnn_size, n_layers, emb_size, dropout, hsm, sharin
       local next_h = nn.ReLU()(nn.CAddTable(){i2h, h2h})
       table.insert(outputs, next_h)
    end
-   -- dropout?
+   -- softmax
    local top_h = outputs[#outputs]
-   if dropout > 0 then
-      top_h = nn.Dropout(dropout)(top_h)
-   else
-      top_h = nn.Identity()(top_h)
-   end
-   -- HSM?
-   if hsm == 0 then
-      -- no hsm
-      local proj = nn.Linear(rnn_size, emb_size)(top_h)
-      local decoder = nn.Linear(emb_size, input_size)(proj)
-      -- sharing encoder/decoder?
-      if sharing then
-         encoder.data.module:share(decoder.data.module, 'weight', 'gradWeight')
-      end
-      local logsoft = nn.LogSoftMax()(decoder)
-      table.insert(outputs, logsoft)
-   else
-      -- hsm
-      table.insert(outputs, top_h)
-   end
+   local logsoft = LSM.lsm(input_size, rnn_size, emb_size, dropout, hsm, sharing, encoder)(top_h)
+   table.insert(outputs, logsoft)
 
    return nn.gModule(inputs, outputs)
 end

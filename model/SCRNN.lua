@@ -1,14 +1,7 @@
 local SCRNN = {}
 
-function SCRNN.scrnn(vocab_size, emb_size, hidden_size, context_size, n_layers, dropout, alpha, share)
-   -- defaults
-   emb_size = emb_size or 128
-   hidden_size = hidden_size or 512
-   context_size = context_size or 128
-   n_layers = n_layers or 1
-   dropout = dropout or 0
-   alpha = alpha or 0.95
-   share = share or true
+function SCRNN.scrnn(vocab_size, rnn_size, context_size, n_layers, emb_size, dropout, share)
+   alpha = 0.95
    -- there will be 2*n+1 inputs
    local inputs = {}
    table.insert(inputs, nn.Identity()()) -- x
@@ -17,7 +10,7 @@ function SCRNN.scrnn(vocab_size, emb_size, hidden_size, context_size, n_layers, 
       table.insert(inputs, nn.Identity()()) -- prev_h[L]
    end
    -- lookup table
-   local dictionary = nn.LookupTable(vocab_size, emb_size)(inputs[1])
+   local encoder = nn.LookupTable(vocab_size, emb_size)(inputs[1])
    -- build n layers
    local x, input_size_L
    local outputs = {}
@@ -27,12 +20,12 @@ function SCRNN.scrnn(vocab_size, emb_size, hidden_size, context_size, n_layers, 
       local prev_h = inputs[L*2+1]
       -- setup input to this layer
       if L == 1 then
-         x = dictionary
+         x = encoder
          input_size_L = emb_size
       else
          x = outputs[(L-1)*2]
          if dropout > 0 then x = nn.Dropout(dropout)(x) end -- dropout?
-         input_size_L = hidden_size
+         input_size_L = rnn_size
       end
       -- evaluate next context S
       local next_s = nn.CAddTable()({
@@ -42,9 +35,9 @@ function SCRNN.scrnn(vocab_size, emb_size, hidden_size, context_size, n_layers, 
       -- evaluate next hidden H
       local next_h = nn.Sigmoid()({
          nn.CAddTable()({
-            nn.Linear(input_size_L, hidden_size)(x),
-            nn.Linear(context_size, hidden_size)(prev_s),
-            nn.Linear(hidden_size, hidden_size)(prev_h)
+            nn.Linear(input_size_L, rnn_size)(x),
+            nn.Linear(context_size, rnn_size)(prev_s),
+            nn.Linear(rnn_size, rnn_size)(prev_h)
          })
       })
       -- load outputs
@@ -62,16 +55,11 @@ function SCRNN.scrnn(vocab_size, emb_size, hidden_size, context_size, n_layers, 
    -- output layer
    local proj = nn.CAddTable()({
       nn.Linear(context_size, emb_size)(top_s),
-      nn.Linear(hidden_size, emb_size)(top_h)
+      nn.Linear(rnn_size, emb_size)(top_h)
    })
-   -- decoder
-   local decoder = nn.Linear(emb_size, vocab_size)(proj)
-   -- share embedding matrix
-   if share then
-      dictionary.data.module:share(decoder.data.module, 'weight', 'gradWeight')
-   end
    -- softmax
-   local logsoft = nn.LogSoftMax()(decoder)
+   -- FIXME
+   local logsoft = LSM.lsm(input_size, rnn_size, emb_size, dropout, hsm, sharing, encoder)(proj)
    table.insert(outputs, logsoft)
 
    return nn.gModule(inputs, outputs)
