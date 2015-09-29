@@ -60,6 +60,7 @@ cmd:option('-max_valids', 100, 'Total number of evaluations, kind of max_epochs'
 cmd:option('-grad_max_norm', 5, 'Renorm gradients at this value')
 cmd:option('-init_from', '', 'Initialize network parameters from checkpoint at this path')
 -- bookkeeping
+cmd:option('-plot', false, 'Plot learning curves')
 cmd:option('-seed', 42, 'Seed for random number generator, for repeatable experiments')
 cmd:option('-print_every', 10, 'How many steps/minibatches between printing out the loss?')
 cmd:option('-eval_val_every', 1e3, 'How many iterations between evaluating on validation data?')
@@ -73,9 +74,17 @@ cmd:text()
 opt = cmd:parse(arg)
 
 -- unique logs_dir
-exp_time = os.date('%Y.%m.%d_%H.%M')
+local exp_time = os.date('%Y.%m.%d_%H.%M')
 opt.logs_dir = paths.concat(opt.logs_dir, opt.ds_name, exp_time)
 paths.mkdir(opt.logs_dir)
+
+-- loggers
+local train_logger = optim.Logger(paths.concat(opt.logs_dir, 'train.log'))
+local valid_logger = optim.Logger(paths.concat(opt.logs_dir, 'valid.log'))
+train_logger:setNames{'train ppl'}
+valid_logger:setNames{'train ppl', 'val ppl'}
+train_logger:style{'-'}
+valid_logger:style{'-', '-'}
 
 -- print parmas
 print('Parameters:')
@@ -348,9 +357,11 @@ function feval(x)
        grad_params:mul(opt.grad_max_norm / gp_norm)
        -- print(string.format('grads renorm: %.2f -> %.2f', gp_norm, grad_params:norm()))
     end
+
     -- get average token/seconds
     local curr_ts = x:nElement() / ts_timer:time().real
     avg_ts = avg_ts and 0.99 * avg_ts + 0.01 * curr_ts or curr_ts
+
     return loss, grad_params
 end
 
@@ -387,6 +398,7 @@ local iterations_per_epoch = loader.ntrain
 local loss0 = nil
 local best_ppl = nil
 local total_valids = 0
+-- TRAIN loop
 for i = 1, iterations do
     local epoch = i / #loader._train_batches
 
@@ -394,7 +406,7 @@ for i = 1, iterations do
     local _, loss = optim_algo(feval, params, optim_state)
     local time = timer:time().real
 
-    local train_ppl = math.exp(loss[1]) -- the loss is inside a list, pop it
+    train_ppl = math.exp(loss[1]) -- the loss is inside a list, pop it
     train_ppls[i] = train_ppl
 
     -- every now and then or on last iteration
@@ -403,6 +415,9 @@ for i = 1, iterations do
        local val_ppl = math.exp(eval_split(loader:valid_batches()))
        val_ppls[i] = val_ppl
        print('Evaluation PPL: '..val_ppl)
+       -- plot?
+       valid_logger:add{train_ppl, val_ppl}
+       if opt.plot then valid_logger:plot() end
        -- best model? -> save!
        if best_ppl == nil or val_ppl < best_ppl then
           best_ppl = val_ppl
@@ -441,7 +456,10 @@ for i = 1, iterations do
     end
 
     if i % opt.print_every == 0 then
-        print(string.format("%d/%d (epoch %.3f), perplexity = %6.2f, grad/param norm = %6.4e, tokens/sec = %.f", i, iterations, epoch, train_ppl, grad_params:norm() / params:norm(), avg_ts))
+       print(string.format("%d/%d (epoch %.3f), perplexity = %6.2f, grad/param norm = %6.4e, tokens/sec = %.f", i, iterations, epoch, train_ppl, grad_params:norm() / params:norm(), avg_ts))
+       -- plot?
+       train_logger:add{train_ppl}
+       if opt.plot then train_logger:plot() end
     end
 
     if i % 100 == 0 then collectgarbage() end
@@ -457,5 +475,3 @@ for i = 1, iterations do
         break -- halt
     end
 end
-
-
