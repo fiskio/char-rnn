@@ -39,42 +39,45 @@ cmd:text()
 cmd:text('Options')
 -- data
 cmd:option('-data_dir','data/ptb','data directory. Should contain the file input.txt with input data')
+cmd:option('-vocab_size', 1e4, 'Number of words in the dictionary')
+cmd:option('-seq_length', 50, 'Maximum number of tokens in a sentence')
+cmd:option('-max_reps', 5, 'Maximum number of repeated tokens per line')
 -- model params
-cmd:option('-hidden_size', 512, 'size of LSTM internal state')
-cmd:option('-context_size', 128, 'size of SCRNN context state')
-cmd:option('-num_layers', 1, 'number of layers in the LSTM')
+cmd:option('-hidden_size', 512, 'Size of recurrent internal state')
+cmd:option('-context_size', 128, 'Size of SCRNN context state')
+cmd:option('-num_layers', 1, 'Number of recurrent layers')
 cmd:option('-model', 'rnn', 'rnn | gru | lstm | scrnn')
-cmd:option('-embeddings', 128, 'size of word embeddings')
+cmd:option('-emb_size', 128, 'Size of word embeddings')
 cmd:option('-hsm', -1, 'HSM classes, 0 is off, -1 is sqrt(vocab)')
 -- optimization
 cmd:option('-optim', 'rmsprop', 'Optimisation algorithm')
-cmd:option('-learning_rate',1e-3,'learning rate')
-cmd:option('-learning_rate_decay',0.95,'learning rate decay')
+cmd:option('-learning_rate', 1e-3, 'Initial learning rate')
+cmd:option('-learning_rate_decay' ,0.95, 'learning rate decay factor')
+-- TODO halve instead
 cmd:option('-learning_rate_decay_after',25,'in number of epochs, when to start decaying the learning rate')
-cmd:option('-dropout',0,'dropout for regularization, used after each RNN hidden layer. 0 = no dropout')
-cmd:option('-sgd_weight_decay', 0, 'weight decay')
-cmd:option('-sgd_momentum', 0, 'momentum')
-cmd:option('-sgd_momentum_nesterov', false, 'use nesterov momentum ')
+cmd:option('-dropout', 0.5,'Dropout for regularization, 0 = no dropout')
+cmd:option('-sgd_weight_decay', 0, 'SGD weight decay or L2 regularisation')
+cmd:option('-sgd_momentum', 0, 'SGD momentum')
+cmd:option('-sgd_momentum_nesterov', false, 'SGD, use nesterov momentum')
 cmd:option('-rmsprop_alpha', 0.99,'smoothing constant')
-cmd:option('-rmsprop_epsilon', 1e-8, 'value with which to inistialise m')
-cmd:option('-adam_beta1', 0.9, 'first moment coefficient')
-cmd:option('-adam_beta2', 0.999, 'second moment coefficient')
-cmd:option('-adam_lambda', 1-1e-8, 'first moment decay')
-cmd:option('-adadelta_rho', 0.95, 'interpolation parameter')
-cmd:option('-seq_length',50,'number of timesteps to unroll for')
-cmd:option('-batch_size',32,'number of sequences to train on in parallel')
-cmd:option('-max_epochs',50,'number of full passes through the training data')
-cmd:option('-grad_clip',5,'clip gradients at this value')
-cmd:option('-init_from', '', 'initialize network parameters from checkpoint at this path')
+cmd:option('-rmsprop_epsilon', 1e-8, 'RMSprop epsilon')
+cmd:option('-adam_beta1', 0.9, 'ADAM first moment coefficient')
+cmd:option('-adam_beta2', 0.999, 'ADAM second moment coefficient')
+cmd:option('-adam_lambda', 1-1e-8, 'ADAM first moment decay')
+cmd:option('-adadelta_rho', 0.95, 'ADADELTA interpolation parameter')
+cmd:option('-batch_size', 32, 'Number of sequences to train on in parallel')
+cmd:option('-max_epochs', 50, 'Total number of full passes through the training data')
+cmd:option('-grad_clip', 5, 'Clip gradients at this value')
+cmd:option('-init_from', '', 'Initialize network parameters from checkpoint at this path')
 -- bookkeeping
-cmd:option('-seed',42,'torch manual random number generator seed')
-cmd:option('-print_every',10,'how many steps/minibatches between printing out the loss')
-cmd:option('-eval_val_every',1000,'every how many iterations should we evaluate on validation data?')
-cmd:option('-checkpoint_dir', 'cv', 'output directory where checkpoints get written')
-cmd:option('-savefile','lstm','filename to autosave the checkpont to. Will be inside checkpoint_dir/')
+cmd:option('-seed', 42, 'Seed for random number generator, for repeatable experiments')
+cmd:option('-print_every', 10, 'How many steps/minibatches between printing out the loss?')
+cmd:option('-eval_val_every', 1e3, 'How many iterations between evaluating on validation data?')
+cmd:option('-checkpoint_dir', 'logs', 'Output root directory for experiment logs')
+cmd:option('-savefile', '', 'Filename to autosave the checkpont to. Will be inside logs/')
 -- GPU/CPU
-cmd:option('-gpuid',0,'which gpu to use. -1 = use CPU')
-cmd:option('-opencl',0,'use OpenCL (instead of CUDA)')
+cmd:option('-gpuid', 0, 'Which gpu to use, -1 = use CPU')
+cmd:option('-opencl', 0, 'Use OpenCL (instead of CUDA)')
 cmd:text()
 
 -- parse input params
@@ -117,14 +120,14 @@ if opt.gpuid >= 0 and opt.opencl == 1 then
     end
 end
 
--- create the data loader class
+-- create the Text loader class
 local loader = Text{
                   name = paths.basename(opt.data_dir),
                   data_path = paths.dirname(opt.data_dir),
-                  vocab_size = 1e4,
+                  vocab_size = opt.vocab_size,
                   batch_size = opt.batch_size,
-                  max_length = 50,
-                  max_reps = 10
+                  max_length = opt.seq_length,
+                  max_reps = opt.max_reps
                }
 local vocab_size = loader._vocab_size  -- the number of distinct characters
 local vocab = loader._word2class
@@ -155,13 +158,13 @@ else
     print('creating an ' .. opt.model .. ' with ' .. opt.num_layers .. ' layers')
     protos = {}
     if opt.model == 'lstm' then
-        protos.rnn = LSTM.lstm(vocab_size, opt.hidden_size, opt.num_layers, opt.embeddings, opt.dropout)
+        protos.rnn = LSTM.lstm(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout)
     elseif opt.model == 'gru' then
-        protos.rnn = GRU.gru(vocab_size, opt.hidden_size, opt.num_layers, opt.embeddings, opt.dropout)
+        protos.rnn = GRU.gru(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout)
     elseif opt.model == 'rnn' then
-        protos.rnn = RNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.embeddings, opt.dropout, opt.hsm)
+        protos.rnn = RNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
     elseif opt.model == 'scrnn' then
-        protos.rnn = SCRNN.scrnn(vocab_size, opt.embeddings, opt.hidden_size, opt.context_size, opt.num_layers, opt.dropout)
+        protos.rnn = SCRNN.scrnn(vocab_size, opt.emb_size, opt.hidden_size, opt.context_size, opt.num_layers, opt.dropout)
     end
     -- HSM?
     if opt.hsm ~= 0 then
