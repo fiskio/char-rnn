@@ -362,21 +362,21 @@ val_ppls = {}
 
 local optim_states = {
    rmsprop  = { learningRate = opt.learning_rate,
-   alpha        = opt.rmsprop_alpha,
-   epsilon      = opt.rmsprop_epsilon },
+                alpha        = opt.rmsprop_alpha,
+                epsilon      = opt.rmsprop_epsilon },
    adagrad  = { learningRate      = opt.learning_rate,
-   learningRateDecay = opt.learning_rate_decay },
+                learningRateDecay = opt.learning_rate_decay },
    adam     = { learningRate = opt.learning_rate,
-   beta1  = opt.adam_beta1,
-   beta2  = opt.adam_beta2,
-   lambda = opt.adam_lambda },
+                beta1  = opt.adam_beta1,
+                beta2  = opt.adam_beta2,
+                lambda = opt.adam_lambda },
    adadelta = { rho = opt.adadelta_rho },
    sgd      = { learningRate      = opt.learning_rate,
-   learningRateDecay = opt.learning_rate_decay,
-   weightDecay       = opt.sgd_weight_decay,
-   momentum          = opt.sgd_momentum,
-   nesterov          = opt.sgd_momentum_nesterov,
-   dampening         = opt.sgd_momentum_nesterov and 0 or opt.sgd_momentum }
+                learningRateDecay = opt.learning_rate_decay,
+                weightDecay       = opt.sgd_weight_decay,
+                momentum          = opt.sgd_momentum,
+                nesterov          = opt.sgd_momentum_nesterov,
+                dampening         = opt.sgd_momentum_nesterov and 0 or opt.sgd_momentum }
 }
 
 local optim_state = optim_states[opt.optim] or error('Unrecognised optim algorithm:'..opt.optim)
