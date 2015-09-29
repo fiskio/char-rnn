@@ -48,7 +48,8 @@ cmd:option('-context_size', 128, 'Size of SCRNN context state')
 cmd:option('-num_layers', 1, 'Number of recurrent layers')
 cmd:option('-model', 'rnn', 'rnn | gru | lstm | scrnn')
 cmd:option('-emb_size', 128, 'Size of word embeddings')
-cmd:option('-hsm', -1, 'HSM classes, 0 is off, -1 is sqrt(vocab)')
+cmd:option('-hsm', 0, 'HSM classes, 0 is off, -1 is sqrt(vocab)')
+cmd:option('-emb_sharing', true, 'Share the encoder/decoder matrices')
 -- optimization
 cmd:option('-optim', 'rmsprop', 'Optimisation algorithm')
 cmd:option('-learning_rate', 1e-3, 'Initial learning rate')
@@ -89,6 +90,11 @@ print(opt)
 
 -- seed
 torch.manualSeed(opt.seed)
+
+-- check parameters
+if opt.hsm ~= 0 and opt.emb_sharing then
+   error('Sharing encoder/decoder matrices and HSM are incompatible!')
+end
 
 -- initialize cunn/cutorch for training on the GPU and fall back to CPU gracefully
 if opt.gpuid >= 0 and opt.opencl == 0 then
@@ -169,7 +175,7 @@ else
     elseif opt.model == 'gru' then
         protos.rnn = GRU.gru(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout)
     elseif opt.model == 'rnn' then
-        protos.rnn = RNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
+        protos.rnn = RNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
     elseif opt.model == 'scrnn' then
         protos.rnn = SCRNN.scrnn(vocab_size, opt.emb_size, opt.hidden_size, opt.context_size, opt.num_layers, opt.dropout)
     end
