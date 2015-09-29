@@ -38,7 +38,7 @@ cmd:text('Train a recurrent language model')
 cmd:text()
 cmd:text('Options')
 -- data
-cmd:option('-data_dir','data/tinyshakespeare','data directory. Should contain the file input.txt with input data')
+cmd:option('-data_dir','data/ptb','data directory. Should contain the file input.txt with input data')
 -- model params
 cmd:option('-hidden_size', 512, 'size of LSTM internal state')
 cmd:option('-context_size', 128, 'size of SCRNN context state')
