@@ -1,36 +1,20 @@
---[[
-
-This file trains a character-level multi-layer RNN on text data
-
-Code is based on implementation in
-https://github.com/oxford-cs-ml-2015/practical6
-but modified to have multi-layer support, GPU support, as well as
-many other common model/optimization bells and whistles.
-The practical6 code is in turn based on
-https://github.com/wojciechz/learning_to_execute
-which is turn based on other stuff in Torch, etc... (long lineage)
-
-]]--
-
 require 'torch'
 require 'nn'
 require 'nngraph'
 require 'optim'
-require 'lfs'
 require 'autobw'
 
-require 'util.OneHot'
 require 'util.misc'
 require 'util.HLogSoftMax'
 require 'util.Squeeze'
+
+HSMClass = require 'util.HSMClass'
 local text = require 'text'
 local model_utils = require 'util.model_utils'
-HSMClass = require 'util.HSMClass'
 local LSTM = require 'model.LSTM'
 local GRU = require 'model.GRU'
 local RNN = require 'model.RNN'
 local SCRNN = require 'model.SCRNN'
-
 
 cmd = torch.CmdLine()
 cmd:text()
@@ -38,7 +22,7 @@ cmd:text('Train a recurrent language model')
 cmd:text()
 cmd:text('Options')
 -- data
-cmd:option('-data_dir','data/ptb','data directory. Should contain the file input.txt with input data')
+cmd:option('-data_dir','data/ptb','data directory')
 cmd:option('-vocab_size', 1e4, 'Number of words in the dictionary')
 cmd:option('-seq_length', 50, 'Maximum number of tokens in a sentence')
 cmd:option('-max_reps', 5, 'Maximum number of repeated tokens per line')
@@ -53,7 +37,7 @@ cmd:option('-emb_sharing', true, 'Share the encoder/decoder matrices')
 -- optimization
 cmd:option('-optim', 'rmsprop', 'Optimisation algorithm')
 cmd:option('-learning_rate', 1e-3, 'Initial learning rate')
-cmd:option('-learning_rate_decay' ,0.95, 'Learning rate decay factor')
+cmd:option('-learning_rate_decay' ,0.9, 'Learning rate decay factor')
 cmd:option('-ppl_tolerance', 5, 'Maximum difference between current PPL and best, triggers decaying')
 --cmd:option('-learning_rate_decay_after',25,'in number of epochs, when to start decaying the learning rate')
 cmd:option('-dropout', 0.5,'Dropout for regularization, 0 = no dropout')
@@ -148,9 +132,6 @@ local loader = Text{
 local vocab_size = loader._vocab_size  -- the number of distinct characters
 local vocab = loader._word2class
 --TODO print a 'text summary'
---
--- make sure log directory exists
-if not path.exists(opt.logs_dir) then lfs.mkdir(opt.logs_dir) end
 
 -- define the model: prototypes for one timestep, then clone them in time
 local do_random_init = true
@@ -292,7 +273,6 @@ function feval(x)
         params:copy(x)
     end
     grad_params:zero()
-    --if opt.hsm ~= 0 then hsm_grad_params:zero() end
 
     ------------------ get minibatch -------------------
     local x, y = loader:next_batch(loader._train_batches)
@@ -334,9 +314,8 @@ function feval(x)
     ------------------ backward pass -------------------
     tape:backward()
     ------------------------ misc ----------------------
-    -- transfer final state to initial state (BPTT)
-    -- TODO pass on context state in SCRNN
-    -- init_state_global = rnn_state[#rnn_state]
+    -- TODO pass on final context state to next batch in SCRNN
+
     -- clip gradient element-wise
     grad_params:clamp(-opt.grad_clip, opt.grad_clip)
     -- TODO renorm?
@@ -385,6 +364,7 @@ for i = 1, iterations do
     train_ppls[i] = train_ppl
 
     --[[
+    -- TODO in or out? PPL tolerance might be sufficient
     -- exponential learning rate decay
     if i % #loader._train_batches == 0 and opt.learning_rate_decay < 1 then
         if epoch >= opt.learning_rate_decay_after then
@@ -438,7 +418,6 @@ for i = 1, iterations do
     -- handle early stopping if things are going really bad
     if loss[1] ~= loss[1] then
         print('Loss is NaN.  This usually indicates a bug.  Please check the issues page for existing issues, or create a new issue, if none exist.  Ideally, please state: your operating system, 32-bit/64-bit, your blas version, cpu/cuda/cl?')
-
         break -- halt
     end
     if loss0 == nil then loss0 = loss[1] end
