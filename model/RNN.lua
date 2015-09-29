@@ -7,13 +7,12 @@ function RNN.rnn(input_size, rnn_size, n_layers, embeddings, dropout, hsm)
   table.insert(inputs, nn.Identity()()) -- x
   for L = 1,n_layers do
     table.insert(inputs, nn.Identity()()) -- prev_h[L]
-
   end
-
   local x, input_size_L
   local outputs = {}
-  for L = 1,n_layers do
 
+  -- for all layers
+  for L = 1,n_layers do
     local prev_h = inputs[L+1]
     if L == 1 then
       x = nn.LookupTable(input_size, embeddings)(inputs[1])
@@ -27,9 +26,8 @@ function RNN.rnn(input_size, rnn_size, n_layers, embeddings, dropout, hsm)
     -- RNN tick
     local i2h = nn.Linear(input_size_L, rnn_size)(x)
     local h2h = nn.Linear(rnn_size, rnn_size)(prev_h)
-  --  if i2h.data.module.weight:size() ~= h2h.data.module.weight:size() then
-       print(i2h.data.module.weight:size(), h2h.data.module.weight:size())
-    --end
+    -- if i2h.data.module.weight:size() ~= h2h.data.module.weight:size() then
+    -- print(i2h.data.module.weight:size(), h2h.data.module.weight:size())
     local next_h = nn.Tanh()(nn.CAddTable(){i2h, h2h})
 
     table.insert(outputs, next_h)

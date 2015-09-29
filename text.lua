@@ -391,7 +391,6 @@ function Text:setupHSM()
    --foo = require 'util.HLogSoftMax'
    if self._hsm_classes ~= 0 then
       local vocab_size = #self._class2word
-      print(vocab_size)
       local n_classes = (self._hsm_classes == -1) and torch.round(torch.sqrt(vocab_size)) or self._hsm_classes
       local mapping = torch.LongTensor(vocab_size, 2):zero()
       local n_in_each_cluster = vocab_size / n_classes
@@ -415,7 +414,7 @@ function Text:setupHSM()
          end
       end
       print(string.format('using hierarchical softmax with %d classes', n_classes))
-      print(mapping)
+      -- print(mapping)
       self._hsm_mapping = mapping
    end
 end
