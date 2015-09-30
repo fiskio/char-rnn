@@ -4,7 +4,7 @@ Paper reference: http://arxiv.org/pdf/1412.3555v1.pdf
 ]]--
 local GRU = {}
 
-function GRU.gru(input_size, rnn_size, n_layers, emb_size, dropout, hsm, sharing)
+function GRU.gru(input_size, rnn_size, n_layers, emb_size, dropout, hsm)
    -- there are n+1 inputs (hiddens on each layer and x)
    local inputs = {}
    table.insert(inputs, nn.Identity()()) -- x
@@ -51,7 +51,7 @@ function GRU.gru(input_size, rnn_size, n_layers, emb_size, dropout, hsm, sharing
    end
    -- softmax
    local top_h = outputs[#outputs]
-   local logsoft = LSM.lsm(input_size, rnn_size, emb_size, dropout, hsm, sharing, encoder)(top_h)
+   local logsoft = LSM.lsm(input_size, rnn_size, emb_size, dropout, hsm, encoder)(top_h)
    table.insert(outputs, logsoft)
 
    return nn.gModule(inputs, outputs)

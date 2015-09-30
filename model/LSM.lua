@@ -1,6 +1,6 @@
 local LSM = {}
 
-function LSM.lsm(input_size, rnn_size, emb_size, dropout, hsm, sharing, encoder)
+function LSM.lsm(input_size, rnn_size, emb_size, dropout, hsm, encoder)
    -- there are n+1 inputs (hiddens on each layer and x)
    local inputs = {}
    table.insert(inputs, nn.Identity()())
@@ -17,12 +17,7 @@ function LSM.lsm(input_size, rnn_size, emb_size, dropout, hsm, sharing, encoder)
    if hsm == 0 then
       -- no hsm
       local proj = nn.Linear(rnn_size, emb_size)(top_h)
-      local decoder = nn.Linear(emb_size, input_size)(proj)
-      -- sharing encoder/decoder?
-      if sharing then
-         print('Sharing encoder/decoder matrix')
-         encoder.data.module:share(decoder.data.module, 'weight', 'gradWeight')
-      end
+      decoder = nn.Linear(emb_size, input_size)(proj)
       local logsoft = nn.LogSoftMax()(decoder)
       table.insert(outputs, logsoft)
    else
@@ -30,7 +25,11 @@ function LSM.lsm(input_size, rnn_size, emb_size, dropout, hsm, sharing, encoder)
       table.insert(outputs, top_h)
    end
 
-   return nn.gModule(inputs, outputs)
+   local out = nn.gModule(inputs, outputs)
+   out.name = 'lsm'
+   out.encoder = encoder
+   out.decoder = decoder
+   return out
 end
 
 return LSM

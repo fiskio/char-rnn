@@ -30,7 +30,7 @@ function RNN.rnn(input_size, rnn_size, n_layers, emb_size, dropout, hsm, sharing
    end
    -- softmax
    local top_h = outputs[#outputs]
-   local logsoft = LSM.lsm(input_size, rnn_size, emb_size, dropout, hsm, sharing, encoder)(top_h)
+   local logsoft = LSM.lsm(input_size, rnn_size, emb_size, dropout, hsm, encoder)(top_h)
    table.insert(outputs, logsoft)
 
    return nn.gModule(inputs, outputs)

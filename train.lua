@@ -152,16 +152,15 @@ else
    print(string.format('Creating a %s model with %s layers', opt.model:upper(), opt.num_layers))
    protos = {}
    if opt.model == 'lstm' then
-      protos.rnn = LSTM.lstm(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
+      protos.rnn = LSTM.lstm(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
    elseif opt.model == 'gru' then
-      protos.rnn = GRU.gru(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
+      protos.rnn = GRU.gru(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
    elseif opt.model == 'rnn' then
-      protos.rnn = RNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
+      protos.rnn = RNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
    elseif opt.model == 'irnn' then
-      protos.rnn = IRNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
+      protos.rnn = IRNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
    elseif opt.model == 'scrnn' then
-      print(opt.context_size)
-      protos.rnn = SCRNN.scrnn(vocab_size, opt.hidden_size, opt.context_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
+      protos.rnn = SCRNN.scrnn(vocab_size, opt.hidden_size, opt.context_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
    end
    -- HSM?
    if opt.hsm ~= 0 then
@@ -195,6 +194,16 @@ if opt.gpuid >= 0 and opt.opencl == 0 then
 end
 if opt.gpuid >= 0 and opt.opencl == 1 then
    for k,v in pairs(protos) do v:cl() end
+end
+
+-- share embeddings?
+if opt.emb_sharing then   
+   protos.rnn:apply(function(layer) 
+      if layer.name ~= nil and layer.name == 'lsm' then
+         print('Sharing encoding/decoding matrix')
+         layer.encoder.data.module:share(layer.decoder.data.module, 'weight', 'gradWeight')
+      end
+   end)
 end
 
 -- put everything into one flattened parameters tensor
