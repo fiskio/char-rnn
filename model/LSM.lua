@@ -20,6 +20,7 @@ function LSM.lsm(input_size, rnn_size, emb_size, dropout, hsm, sharing, encoder)
       local decoder = nn.Linear(emb_size, input_size)(proj)
       -- sharing encoder/decoder?
       if sharing then
+         print('Sharing encoder/decoder matrix')
          encoder.data.module:share(decoder.data.module, 'weight', 'gradWeight')
       end
       local logsoft = nn.LogSoftMax()(decoder)

@@ -39,7 +39,7 @@ cmd:option('-num_layers', 1, 'Number of recurrent layers')
 cmd:option('-model', 'rnn', 'rnn | irnn | gru | lstm | scrnn')
 cmd:option('-emb_size', 128, 'Size of word embeddings')
 cmd:option('-hsm', 0, 'HSM classes, 0 is off, -1 is sqrt(vocab)')
-cmd:option('-emb_sharing', true, 'Share the encoder/decoder matrices')
+cmd:option('-emb_sharing', 1, 'Share the encoder/decoder matrices, 1 is on')
 -- optimization
 cmd:option('-optim', 'adam', 'Optimisation algorithm')
 cmd:option('-learning_rate', 1e-3, 'Initial learning rate')
@@ -95,6 +95,7 @@ print(opt)
 torch.manualSeed(opt.seed)
 
 -- check parameters
+opt.emb_sharing = (opt.emb_sharing == 1) and true or false
 if opt.hsm ~= 0 and opt.emb_sharing then
    error('Sharing encoder/decoder matrices and HSM are incompatible!')
 end
@@ -107,7 +108,7 @@ if opt.gpuid >= 0 and opt.opencl == 0 then
    if not ok2 then print('Package cutorch not found!') end
    if ok and ok2 then
       print('Using CUDA on GPU ' .. opt.gpuid .. '...')
-      cutorch.setDevice(opt.gpuid + 1) -- note +1 to make it 0 indexed! sigh lua
+      cutorch.setDevice(opt.gpuid+1)
       cutorch.manualSeed(opt.seed)
    else
       print('If cutorch and cunn are installed, your CUDA toolkit may be improperly configured.')
@@ -125,7 +126,7 @@ if opt.gpuid >= 0 and opt.opencl == 1 then
    if not ok2 then print('Package cltorch not found!') end
    if ok and ok2 then
       print('Using OpenCL on GPU ' .. opt.gpuid .. '...')
-      cltorch.setDevice(opt.gpuid + 1) -- note +1 to make it 0 indexed! sigh lua
+      cltorch.setDevice(opt.gpuid+1)
       torch.manualSeed(opt.seed)
    else
       print('If cltorch and clnn are installed, your OpenCL driver may be improperly configured.')
@@ -162,7 +163,7 @@ local vocab = loader._word2class
 local do_random_init = true
 if string.len(opt.init_from) > 0 then
    -- load previous model
-   print('Loading an LSTM from checkpoint ' .. opt.init_from)
+   print('Loading model from checkpoint ' .. opt.init_from)
    local checkpoint = torch.load(opt.init_from)
    protos = checkpoint.protos
    -- make sure the vocabs are the same
@@ -180,7 +181,7 @@ if string.len(opt.init_from) > 0 then
    do_random_init = false
 else
    -- create new recurrent model prototype
-   print(string.format('Creating a %s model with %s layers', opt.model, opt.num_layers))
+   print(string.format('Creating a %s model with %s layers', opt.model:upper(), opt.num_layers))
    protos = {}
    if opt.model == 'lstm' then
       protos.rnn = LSTM.lstm(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm, opt.emb_sharing)
@@ -312,7 +313,7 @@ function feval(x)
    for i,t in ipairs(init_state) do
       init_state_local[i] = torch.zeros(x:size(1), t:size(2))
    end
-
+   -- gpu?
    if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
       -- have to convert to float because integers can't be cuda()'d
       x = x:float():cuda()
