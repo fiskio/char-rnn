@@ -350,7 +350,9 @@ function Text:load_cache()
    -- helper
    local function check_param(param)
       if cached[param] ~= self[param] then
-         error(string.format('Load error! %s cache: %s, self: %s', param, cached[param], self[param]))
+         print(string.format('Cache parameter mismatch! [ %s ] cache: %s, self: %s', param, cached[param], self[param]))
+         print(string.format('Try removing file %s', path))
+         os.exit()
       end
       return true
    end
