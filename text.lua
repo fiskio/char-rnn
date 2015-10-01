@@ -378,6 +378,7 @@ function Text:load_cache()
    self._test_batches  = cached._test_batches
    self._word2class = cached._word2class
    self._class2word = cached._class2word
+   self._unig_probs = cached._unig_probs
    self._batch_index = cached._batch_index
    self._hsm_classes = cached._hsm_classes
    self._hsm_mapping = cached._hsm_mapping
@@ -424,6 +425,7 @@ end
 function Text:word2class()  return self._word2class end
 function Text:class2word()  return self._class2word end
 function Text:vocab_size()  return #self._class2word end
+function Text:unig_probs()  return self._unig_probs end
 function Text:hsm_mapping() return self._hsm_mapping end
 -- special classes
 function Text:oov_id()   return self._word2class[self._oov_sym]   end

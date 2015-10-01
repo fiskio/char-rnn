@@ -41,6 +41,7 @@ cmd:option('-model', 'rnn', 'rnn | irnn | gru | lstm | scrnn')
 cmd:option('-emb_size', 128, 'Size of word embeddings')
 cmd:option('-hsm', 0, 'HSM classes, 0 is off, -1 is sqrt(vocab)')
 cmd:option('-emb_sharing', 1, 'Share the encoder/decoder matrices, 1 is on')
+cmd:option('-bias_init', 1, 'Initialise the softmax bias with unig probs, 1 is on')
 -- optimization
 cmd:option('-optim', 'adam', 'Optimisation algorithm')
 cmd:option('-learning_rate', 1e-3, 'Initial learning rate')
@@ -97,6 +98,7 @@ torch.manualSeed(opt.seed)
 
 -- check parameters
 opt.emb_sharing = (opt.emb_sharing == 1) and true or false
+opt.bias_init = (opt.bias_init == 1) and true or false
 if opt.hsm ~= 0 and opt.emb_sharing then
    error('Sharing encoder/decoder matrices and HSM are incompatible!')
 end
@@ -197,11 +199,21 @@ if opt.gpuid >= 0 and opt.opencl == 1 then
 end
 
 -- share embeddings?
-if opt.emb_sharing then   
-   protos.rnn:apply(function(layer) 
+if opt.emb_sharing then
+   protos.rnn:apply(function(layer)
       if layer.name ~= nil and layer.name == 'lsm' then
          print('Sharing encoding/decoding matrix')
          layer.encoder.data.module:share(layer.decoder.data.module, 'weight', 'gradWeight')
+      end
+   end)
+end
+
+-- softmax bias init?
+if opt.bias_init then
+   protos.rnn:apply(function(layer)
+      if layer.name ~= nil and layer.name == 'lsm' then
+         print('Initialising softmax bias to unigram distribution')
+         layer.decoder.data.module.bias = loader:unig_probs()
       end
    end)
 end
