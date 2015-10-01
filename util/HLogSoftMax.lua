@@ -30,14 +30,14 @@ function HLogSoftMax:__init(mapping, input_size)
     --class softmax/loss
     self.class_model = HSMClass.hsm(self.input_size, self.n_clusters, self.n_max_class_in_cluster)
     local get_layer = function (layer)
-		          if layer.name ~= nil then
-			      if layer.name == 'class_bias' then
-			          self.class_bias = layer
-			      elseif layer.name == 'class_weight' then
-                                  self.class_weight = layer
-                              end
-		          end
-		      end
+       if layer.name ~= nil then
+          if layer.name == 'class_bias' then
+             self.class_bias = layer
+          elseif layer.name == 'class_weight' then
+             self.class_weight = layer
+          end
+       end
+    end
     self.class_model:apply(get_layer)
     self.logLossClass = nn.ClassNLLCriterion()
 
@@ -102,12 +102,11 @@ function HLogSoftMax:backward(input, target, scale)
 end
 
 function HLogSoftMax:change_bias()
-    -- hacky way to deal with variable cluster sizes
-    for i = 1, self.n_clusters do
-        local c = self.n_class_in_cluster[i]
-        for j = c+1, self.n_max_class_in_cluster do
-            self.class_bias.weight[i][j] = math.log(0)
-        end
-    end
+   -- hacky way to deal with variable cluster sizes
+   for i = 1, self.n_clusters do
+      local c = self.n_class_in_cluster[i]
+      for j = c+1, self.n_max_class_in_cluster do
+         self.class_bias.weight[i][j] = math.log(0)
+      end
+   end
 end
-
