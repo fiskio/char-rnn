@@ -260,8 +260,8 @@ function eval_split()
       end
       if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
          -- have to convert to float because integers can't be cuda()
-         x = x:float():cuda()
-         y = y:float():cuda()
+         x = x:cuda()
+         y = y:cuda()
          for i,s in ipairs(init_state_local) do init_state_local[i] = s:cuda() end
       end
       if opt.gpuid >= 0 and opt.opencl == 1 then -- ship the input arrays to GPU
@@ -305,8 +305,8 @@ function feval(x)
    -- gpu?
    if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
       -- have to convert to float because integers can't be cuda()'d
-      x = x:float():cuda()
-      y = y:float():cuda()
+      x = x:cuda()
+      y = y:cuda()
       for i,s in ipairs(init_state_local) do init_state_local[i] = s:cuda() end
    end
    if opt.gpuid >= 0 and opt.opencl == 1 then -- ship the input arrays to GPU
