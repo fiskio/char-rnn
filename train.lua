@@ -8,6 +8,7 @@ require 'util.misc'
 require 'util.HLogSoftMax'
 require 'util.Squeeze'
 
+tbx = require 'pl.tablex'
 HSMClass = require 'util.HSMClass'
 LSM = require 'model.LSM'
 text = require 'text'
@@ -34,7 +35,7 @@ cmd:option('-max_reps', 5, 'Maximum number of repeated tokens per line')
 cmd:option('-s3_input', '', 'S3 dataset base location, / terminated')
 cmd:option('-s3_output', '', 'S3 logs base location, / terminated')
 -- model params
-cmd:option('-hidden_size', 512, 'Size of recurrent internal state')
+cmd:option('-rnn_size', 512, 'Size of recurrent internal state')
 cmd:option('-context_size', 128, 'Size of SCRNN context state')
 cmd:option('-num_layers', 1, 'Number of recurrent layers')
 cmd:option('-model', 'rnn', 'rnn | irnn | gru | lstm | scrnn')
@@ -127,10 +128,14 @@ local loader = Text{
    max_length = opt.seq_length,
    max_reps = opt.max_reps
 }
-local vocab_size = loader._vocab_size  -- the number of distinct characters
-local vocab = loader._word2class
+local vocab_size = loader:vocab_size()
+local word2class = loader:word2class()
 if opt.hsm ~= 0 then loader:setupHSM(opt.hsm) end
 --TODO print a 'text summary'
+
+curr_batch_idx = 1
+train_ppl_lst = {}
+val_ppl_lst = {}
 
 -- define the model: prototypes for one timestep, then clone them in time
 if train_new_model then
@@ -138,40 +143,37 @@ if train_new_model then
    print(string.format('Creating a %s model with %s layers', opt.model:upper(), opt.num_layers))
    protos = {}
    if opt.model == 'lstm' then
-      protos.rnn = LSTM.lstm(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
+      protos.rnn = LSTM.lstm(vocab_size, opt.rnn_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
    elseif opt.model == 'gru' then
-      protos.rnn = GRU.gru(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
+      protos.rnn = GRU.gru(vocab_size, opt.rnn_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
    elseif opt.model == 'rnn' then
-      protos.rnn = RNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
+      protos.rnn = RNN.rnn(vocab_size, opt.rnn_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
    elseif opt.model == 'irnn' then
-      protos.rnn = IRNN.rnn(vocab_size, opt.hidden_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
+      protos.rnn = IRNN.rnn(vocab_size, opt.rnn_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
    elseif opt.model == 'scrnn' then
-      protos.rnn = SCRNN.scrnn(vocab_size, opt.hidden_size, opt.context_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
+      protos.rnn = SCRNN.scrnn(vocab_size, opt.rnn_size, opt.context_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
    end
    -- HSM?
    if opt.hsm ~= 0 then
-      protos.criterion = nn.HLogSoftMax(loader:hsm_mapping(), opt.hidden_size)
+      protos.criterion = nn.HLogSoftMax(loader:hsm_mapping(), opt.rnn_size)
    else
       protos.criterion = nn.ClassNLLCriterion()
    end
 else
    -- load previously trained model
-   print('Loading model from checkpoint ' .. opt.init_from)
+   print(string.format('Loading model from checkpoint %s', opt.init_from))
    local checkpoint = torch.load(opt.init_from)
+   -- make sure the checkpoint is compatible with new configuration
+   assert(tbx.deepcompare(checkpoint.word2class, word2class), 'Error, word2class mismatch!')
+   assert(opt.rnn_size == checkpoint.opt.rnn_size, 'Error, rnn_size was: '..checkpoint.opt.rnn_size)
+   assert(opt.num_layers == checkpoint.opt.num_layers, 'Error! num_layers was: '..checkpoint.opt.num_layers)
+   assert(opt.valid_period == checkpoint.opt.valid_period, 'Error! valid_period was: '.. checkpoint.opt.valid_period)
+   -- fetch model and metadata
    protos = checkpoint.protos
-   -- make sure the vocabs are the same
-   local vocab_compatible = true
-   for c,i in pairs(checkpoint.vocab) do
-      if not vocab[c] == i then
-         vocab_compatible = false
-      end
-   end
-   assert(vocab_compatible, 'Error, the vocabulary for this dataset and the one in the saved checkpoint are not the same. This is trouble.')
-   -- overwrite model settings based on checkpoint to ensure compatibility
-   print('Overwriting hidden_size=' .. checkpoint.opt.hidden_size .. ', num_layers=' .. checkpoint.opt.num_layers .. ' based on the checkpoint.')
-   opt.hidden_size = checkpoint.opt.hidden_size
-   opt.num_layers = checkpoint.opt.num_layers
-   do_random_init = false
+   train_ppl_lst = checkpoint.train_ppl_lst
+   val_ppl_lst = checkpoint.val_ppl_lst
+   curr_batch_idx = checkpoint.batch_idx+1
+   epoch = checkpoint.epoch
 end
 
 -- setup initial state sizes
@@ -180,10 +182,10 @@ for i=1,opt.num_layers do
    if opt.model == 'scrnn' then
       table.insert(init_state_sizes, opt.context_size)
    end
-   local h_init = torch.zeros(opt.batch_size, opt.hidden_size)
-   table.insert(init_state_sizes, opt.hidden_size)
+   local h_init = torch.zeros(opt.batch_size, opt.rnn_size)
+   table.insert(init_state_sizes, opt.rnn_size)
    if opt.model == 'lstm' then
-      table.insert(init_state_sizes, opt.hidden_size)
+      table.insert(init_state_sizes, opt.rnn_size)
    end
 end
 
@@ -238,23 +240,23 @@ end
 
 -- evaluate the loss over on validation set
 function run_validation()
-   local n = #loader._valid_batches
+   local n = #loader:valid_batches()
    loader:reset_batch_pointer(loader:valid_batches()) -- reset validation batch pointer
    local loss = 0
    xlua.progress(1,n)
    -- iterate over batches in the split
    for i=1,n do
       -- fetch a batch
-      local x, y = loader:next_batch(loader:valid_batches())
-      local curr_batch_size = x:size(1)
-      local curr_seq_length = x:size(2)
+      local inputs, targets = loader:next_batch(loader:valid_batches())
+      local curr_batch_size = inputs:size(1)
+      local curr_seq_length = inputs:size(2)
       local init_state_local = {}
       for _, init_size in ipairs(init_state_sizes) do
          table.insert(init_state_local, torch.zeros(curr_batch_size, init_size))
       end
       -- ship to gpu?
-      x = gpu_utils.ship(x)
-      y = gpu_utils.ship(y)
+      inputs = gpu_utils.ship(inputs)
+      targets = gpu_utils.ship(targets)
       init_state_local = gpu_utils.ship_table(init_state_local)
 
       local rnn_state = {[0] = init_state_local}
@@ -262,10 +264,10 @@ function run_validation()
       local curr_loss = 0
       for t=1, curr_seq_length do
          clones.rnn[t]:evaluate() -- for dropout proper functioning
-         local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
+         local lst = clones.rnn[t]:forward{inputs[{{}, t}], unpack(rnn_state[t-1])}
          rnn_state[t] = {}
          for i=1,#init_state_sizes do table.insert(rnn_state[t], lst[i]) end
-         curr_loss = curr_loss + clones.criterion[t]:forward(lst[#lst], y[{{}, t}])
+         curr_loss = curr_loss + clones.criterion[t]:forward(lst[#lst], targets[{{}, t}])
       end
       -- carry over lstm state
       loss = loss + curr_loss / curr_seq_length
@@ -285,17 +287,17 @@ function feval(x)
    end
    grad_params:zero()
    ------------------ get minibatch -------------------
-   local x, y = loader:next_batch(loader._train_batches)
-   local curr_batch_size = x:size(1)
-   local curr_seq_length = x:size(2)
+   local inputs, targets = loader:next_batch(loader:train_batches())
+   local curr_batch_size = inputs:size(1)
+   local curr_seq_length = inputs:size(2)
    local init_state_local = {}
    for _, init_size in ipairs(init_state_sizes) do
       table.insert(init_state_local, torch.zeros(curr_batch_size, init_size))
    end
 
    -- gpu?
-   x = gpu_utils.ship(x)
-   y = gpu_utils.ship(y)
+   inputs = gpu_utils.ship(inputs)
+   targets = gpu_utils.ship(targets)
    init_state_local = gpu_utils.ship_table(init_state_local)
 
    ------------------- forward pass -------------------
@@ -307,18 +309,16 @@ function feval(x)
    local ts_timer = torch.Timer()
    for t=1,curr_seq_length do
       clones.rnn[t]:training() -- make sure we are in correct mode (this is cheap, sets flag)
-      local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
+      local lst = clones.rnn[t]:forward{inputs[{{}, t}], unpack(rnn_state[t-1])}
       rnn_state[t] = {}
       for i=1,#init_state_sizes do table.insert(rnn_state[t], lst[i]) end -- extract the state, without output
-      loss = loss + clones.criterion[t]:forward(lst[#lst], y[{{}, t}])
+      loss = loss + clones.criterion[t]:forward(lst[#lst], targets[{{}, t}])
    end
    loss = loss / curr_seq_length
    tape:stop()
    ------------------ backward pass -------------------
    tape:backward()
    ------------------------ misc ----------------------
-   -- clip gradients
-   -- grad_params:clamp(-opt.grad_max_norm, opt.grad_max_norm)
    -- renorm gradients
    local gp_norm = grad_params:norm()
    if gp_norm > opt.grad_max_norm then
@@ -326,16 +326,13 @@ function feval(x)
       -- print(string.format('grads renorm: %.2f -> %.2f', gp_norm, grad_params:norm()))
    end
    -- get average token/seconds
-   local curr_ts = x:nElement() / ts_timer:time().real
+   local curr_ts = inputs:nElement() / ts_timer:time().real
    avg_ts = avg_ts and 0.99 * avg_ts + 0.01 * curr_ts or curr_ts
    -- TODO pass on final context state to next batch in SCRNN
    return loss, grad_params
 end
 
 -- start optimization here
-train_ppls = {}
-val_ppls = {}
-
 local optim_states = {
    rmsprop  = { learningRate = opt.learning_rate,
                 alpha        = opt.rmsprop_alpha,
@@ -361,25 +358,25 @@ print('Optimisation:')
 print(opt.optim, optim_state)
 
 print('Starting training!')
-local iterations = opt.max_epochs * #loader._train_batches
-local iterations_per_epoch = loader.ntrain
+local iterations = opt.max_epochs * #loader:train_batches()
 local loss0 = nil
 local best_ppl = nil
 local total_valids = 0
+loader:reset_batch_pointer(loader:train_batches(), curr_batch_idx) -- (re)set train batch pointer
 -- TRAIN loop
-for i=1, iterations do
+for batch_idx=curr_batch_idx, iterations do
    local timer = torch.Timer()
-   local epoch = i / #loader:train_batches()
+   local epoch = batch_idx / #loader:train_batches()
    local _, loss = optim_algo(feval, params, optim_state)
    local time = timer:time().real
    -- save ppls
    train_ppl = math.exp(loss[1]) -- the loss is inside a list, pop it
-   train_ppls[i] = train_ppl
+   train_ppl_lst[batch_idx] = train_ppl
    -- every now and then or on last iteration
-   if i % opt.valid_period == 0 or i == iterations then
+   if batch_idx % opt.valid_period == 0 or batch_idx == iterations then
       -- evaluate loss on validation data
       local val_ppl = math.exp(run_validation(loader:valid_batches()))
-      val_ppls[i] = val_ppl
+      val_ppl_lst[batch_idx] = val_ppl
       print('Evaluation PPL: '..val_ppl)
       -- plot?
       valid_logger:add{train_ppl, val_ppl}
@@ -392,12 +389,12 @@ for i=1, iterations do
          local checkpoint = {}
          checkpoint.protos = protos
          checkpoint.opt = opt
-         checkpoint.train_ppls = train_ppls
+         checkpoint.train_ppl_lst = train_ppl_lst
          checkpoint.val_ppl = val_ppl
-         checkpoint.val_losses = val_pples
-         checkpoint.i = i
+         checkpoint.val_ppl_lst = val_ppl_lst
+         checkpoint.batch_idx = batch_idx
          checkpoint.epoch = epoch
-         checkpoint.vocab = loader._word2class
+         checkpoint.word2class = loader:word2class()
          torch.save(savefile, checkpoint)
          -- upload to S3?
          if opt.s3_output ~= '' then
@@ -420,8 +417,8 @@ for i=1, iterations do
       end
    end
    -- print train stats?
-   if i % opt.print_every == 0 then
-      print(string.format("%d/%d (epoch %.3f), perplexity: %7.2f, grad/param: %5.4e, tokens/sec: %.f", i, iterations, epoch, train_ppl, grad_params:norm()/params:norm(), avg_ts))
+   if batch_idx % opt.print_every == 0 then
+      print(string.format("%d/%d (epoch %.3f), perplexity: %7.2f, grad/param: %5.4e, tokens/sec: %.f", batch_idx, iterations, epoch, train_ppl, grad_params:norm()/params:norm(), avg_ts))
       -- plot?
       train_logger:add{train_ppl}
       if opt.plot then train_logger:plot() end
@@ -438,5 +435,5 @@ for i=1, iterations do
       break -- halt
    end
    -- gc
-   if i % 100 == 0 then collectgarbage() end
+   if batch_idx % 100 == 0 then collectgarbage() end
 end
