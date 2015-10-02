@@ -19,7 +19,7 @@ function Text:__init(config)
    config = config or {}
    assert(torch.type(config) == 'table' and not config[1], "Constructor requires key-value arguments")
    local args, name, data_path, train_file, valid_file, test_file, unig_file, vocab_cover, vocab_size,
-         max_length, max_reps, batch_size, hsm_classes, oov_sym, start_sym, end_sym, wb_sym, pad_sym
+         max_length, max_reps, batch_size, oov_sym, start_sym, end_sym, wb_sym, pad_sym
       = xlua.unpack(
       {config},
       'Text', nil,
