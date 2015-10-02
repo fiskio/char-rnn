@@ -246,7 +246,7 @@ for name, proto in pairs(protos) do
 end
 
 -- evaluate the loss over on validation set
-function eval_split()
+function run_validation()
    local n = #loader._valid_batches
    loader:reset_batch_pointer(loader:valid_batches()) -- reset validation batch pointer
    local loss = 0
@@ -394,7 +394,7 @@ for i = 1, iterations do
    -- every now and then or on last iteration
    if i % opt.valid_period == 0 or i == iterations then
       -- evaluate loss on validation data
-      local val_ppl = math.exp(eval_split(loader:valid_batches()))
+      local val_ppl = math.exp(run_validation(loader:valid_batches()))
       val_ppls[i] = val_ppl
       print('Evaluation PPL: '..val_ppl)
       -- plot?
