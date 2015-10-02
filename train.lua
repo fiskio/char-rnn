@@ -99,6 +99,7 @@ torch.manualSeed(opt.seed)
 -- check parameters
 opt.emb_sharing = (opt.emb_sharing == 1) and true or false
 opt.bias_init = (opt.bias_init == 1) and true or false
+train_new_model = opt.init_from == ''
 if opt.hsm ~= 0 and opt.emb_sharing then
    error('Sharing encoder/decoder matrices and HSM are incompatible!')
 end
@@ -117,6 +118,7 @@ if opt.s3_input ~= '' then
 end
 
 -- create the Text loader class
+print('Load text dataset...')
 local loader = Text{
    name = opt.ds_name,
    data_path = opt.data_dir,
@@ -131,26 +133,7 @@ if opt.hsm ~= 0 then loader:setupHSM(opt.hsm) end
 --TODO print a 'text summary'
 
 -- define the model: prototypes for one timestep, then clone them in time
-local do_random_init = true
-if string.len(opt.init_from) > 0 then
-   -- load previous model
-   print('Loading model from checkpoint ' .. opt.init_from)
-   local checkpoint = torch.load(opt.init_from)
-   protos = checkpoint.protos
-   -- make sure the vocabs are the same
-   local vocab_compatible = true
-   for c,i in pairs(checkpoint.vocab) do
-      if not vocab[c] == i then
-         vocab_compatible = false
-      end
-   end
-   assert(vocab_compatible, 'Error, the vocabulary for this dataset and the one in the saved checkpoint are not the same. This is trouble.')
-   -- overwrite model settings based on checkpoint to ensure compatibility
-   print('Overwriting hidden_size=' .. checkpoint.opt.hidden_size .. ', num_layers=' .. checkpoint.opt.num_layers .. ' based on the checkpoint.')
-   opt.hidden_size = checkpoint.opt.hidden_size
-   opt.num_layers = checkpoint.opt.num_layers
-   do_random_init = false
-else
+if train_new_model then
    -- create new recurrent model prototype
    print(string.format('Creating a %s model with %s layers', opt.model:upper(), opt.num_layers))
    protos = {}
@@ -171,6 +154,24 @@ else
    else
       protos.criterion = nn.ClassNLLCriterion()
    end
+else
+   -- load previously trained model
+   print('Loading model from checkpoint ' .. opt.init_from)
+   local checkpoint = torch.load(opt.init_from)
+   protos = checkpoint.protos
+   -- make sure the vocabs are the same
+   local vocab_compatible = true
+   for c,i in pairs(checkpoint.vocab) do
+      if not vocab[c] == i then
+         vocab_compatible = false
+      end
+   end
+   assert(vocab_compatible, 'Error, the vocabulary for this dataset and the one in the saved checkpoint are not the same. This is trouble.')
+   -- overwrite model settings based on checkpoint to ensure compatibility
+   print('Overwriting hidden_size=' .. checkpoint.opt.hidden_size .. ', num_layers=' .. checkpoint.opt.num_layers .. ' based on the checkpoint.')
+   opt.hidden_size = checkpoint.opt.hidden_size
+   opt.num_layers = checkpoint.opt.num_layers
+   do_random_init = false
 end
 
 -- setup initial state sizes
@@ -218,12 +219,12 @@ end
 print('Total number of parameters in the model: ' .. params:nElement())
 
 -- initialisation
-if do_random_init then
+if train_new_model then
    print('Initialising network weights')
-   params:uniform(-0.08, 0.08) -- small numbers uniform
-   --initialiser.initialise_network(protos.rnn, opt.model=='irnn')
+   --params:uniform(-0.08, 0.08) -- small numbers uniform
+   initialiser.initialise_network(protos.rnn, opt.model=='irnn')
    if opt.hsm ~= 0 then
-      --initialiser.initialise_network(protos.criterion, opt.model=='irnn')
+      initialiser.initialise_network(protos.criterion, opt.model=='irnn')
    end
 end
 
@@ -359,6 +360,7 @@ local optim_algo = optim[opt.optim]
 print('Optimisation:')
 print(opt.optim, optim_state)
 
+print('Starting training!')
 local iterations = opt.max_epochs * #loader._train_batches
 local iterations_per_epoch = loader.ntrain
 local loss0 = nil
