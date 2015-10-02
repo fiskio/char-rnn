@@ -38,7 +38,7 @@ cmd:option('-hidden_size', 512, 'Size of recurrent internal state')
 cmd:option('-context_size', 128, 'Size of SCRNN context state')
 cmd:option('-num_layers', 1, 'Number of recurrent layers')
 cmd:option('-model', 'rnn', 'rnn | irnn | gru | lstm | scrnn')
-cmd:option('-emb_size', 128, 'Size of word embeddings')
+cmd:option('-emb_size', 160, 'Size of word embeddings')
 cmd:option('-hsm', 0, 'HSM classes, 0 is off, -1 is sqrt(vocab)')
 cmd:option('-emb_sharing', 1, 'Share the encoder/decoder matrices, 1 is on')
 cmd:option('-bias_init', 1, 'Initialise the softmax bias with unig probs, 1 is on')
@@ -46,7 +46,7 @@ cmd:option('-bias_init', 1, 'Initialise the softmax bias with unig probs, 1 is o
 cmd:option('-optim', 'adam', 'Optimisation algorithm')
 cmd:option('-learning_rate', 1e-3, 'Initial learning rate')
 cmd:option('-learning_rate_decay' ,0.9, 'Learning rate decay factor')
-cmd:option('-ppl_tolerance', 5, 'Maximum difference between current PPL and best, triggers decaying')
+cmd:option('-ppl_tolerance', 2, 'Maximum difference between current PPL and best, triggers decaying')
 cmd:option('-dropout', 0.5,'Dropout for regularization, 0 = no dropout')
 cmd:option('-sgd_weight_decay', 0, 'SGD weight decay or L2 regularisation')
 cmd:option('-sgd_momentum', 0, 'SGD momentum')
@@ -57,16 +57,16 @@ cmd:option('-adam_beta1', 0.9, 'ADAM first moment coefficient')
 cmd:option('-adam_beta2', 0.999, 'ADAM second moment coefficient')
 cmd:option('-adam_lambda', 1e-8, 'ADAM first moment decay')
 cmd:option('-adadelta_rho', 0.95, 'ADADELTA interpolation parameter')
-cmd:option('-batch_size', 64, 'Number of sequences to train on in parallel')
-cmd:option('-max_epochs', 50, 'Total number of full passes through the training data')
-cmd:option('-max_valids', 100, 'Total number of evaluations, kind of max_epochs')
+cmd:option('-batch_size', 256, 'Number of sequences to train on in parallel')
+cmd:option('-max_epochs', 1, 'Total number of full passes through the training data')
+cmd:option('-max_valids', 0, 'Total number of evaluations, kind of max_epochs, 0 is off')
 cmd:option('-grad_max_norm', 5, 'Renorm gradients at this value')
 cmd:option('-init_from', '', 'Initialize network parameters from checkpoint at this path')
 -- bookkeeping
 cmd:option('-plot', false, 'Plot learning curves')
 cmd:option('-seed', 42, 'Seed for random number generator, for repeatable experiments')
 cmd:option('-print_every', 10, 'How many steps/minibatches between printing out the loss?')
-cmd:option('-eval_val_every', 1e3, 'How many iterations between evaluating on validation data?')
+cmd:option('-valid_period', 1e3, 'How many iterations between evaluating on validation data?')
 cmd:option('-logs_dir', 'logs', 'Output root directory for experiment logs')
 -- GPU/CPU
 cmd:option('-gpuid', 0, 'Which gpu to use, -1 = use CPU')
@@ -392,7 +392,7 @@ for i = 1, iterations do
    train_ppl = math.exp(loss[1]) -- the loss is inside a list, pop it
    train_ppls[i] = train_ppl
    -- every now and then or on last iteration
-   if i % opt.eval_val_every == 0 or i == iterations then
+   if i % opt.valid_period == 0 or i == iterations then
       -- evaluate loss on validation data
       local val_ppl = math.exp(eval_split(loader:valid_batches()))
       val_ppls[i] = val_ppl
@@ -421,8 +421,7 @@ for i = 1, iterations do
             os.execute(string.format('aws s3 sync %s %s', opt.logs_dir, opt.s3_output..opt.ds_name..'/'..exp_time))
          end
          -- all done?
-         total_valids = total_valids + 1
-         if total_valids == opt.max_valids then
+         if opt.max_valids > 0 and total_valids == opt.max_valids then
             print('Reached the end of the journey, hope you enjoyed!')
             os.exit()
          end
