@@ -38,14 +38,15 @@ function gpu_utils.init()
    end
 end
 
-function gpu_utils.ship(tensor)
+function gpu_utils.ship(input)
    if opt.gpuid >= 0 and opt.opencl == 0 then -- CUDA
-      return tensor:cuda()
+      return input:cuda()
    end
    if opt.gpuid >= 0 and opt.opencl == 1 then -- OpenCL
-      return tensor:cl()
+      return input:cl()
    end
-end 
+   return input
+end
 
 function gpu_utils.ship_table(tbl)
    local out = {}
