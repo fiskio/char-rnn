@@ -1,6 +1,6 @@
 local gpu_utils = {}
 
-function gpu_utils.init(opt)
+function gpu_utils.init()
    -- initialise cunn/cutorch for training on the GPU and fall back to CPU gracefully
    if opt.gpuid >= 0 and opt.opencl == 0 then
       local ok, cunn = pcall(require, 'cunn')
@@ -36,6 +36,23 @@ function gpu_utils.init(opt)
          opt.gpuid = -1 -- overwrite user setting
       end
    end
+end
+
+function gpu_utils.ship(tensor)
+   if opt.gpuid >= 0 and opt.opencl == 0 then -- CUDA
+      return tensor:cuda()
+   end
+   if opt.gpuid >= 0 and opt.opencl == 1 then -- OpenCL
+      return tensor:cl()
+   end
+end 
+
+function gpu_utils.ship_table(tbl)
+   local out = {}
+   for key, value in pairs(tbl) do
+      out[key] = gpu_utils.ship(value)
+   end
+   return out
 end
 
 return gpu_utils
