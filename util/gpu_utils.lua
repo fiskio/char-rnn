@@ -38,6 +38,7 @@ function gpu_utils.init()
    end
 end
 
+-- ship to GPU with CUDA or OpenCL
 function gpu_utils.ship(input)
    if opt.gpuid >= 0 and opt.opencl == 0 then -- CUDA
       return input:cuda()
@@ -48,10 +49,20 @@ function gpu_utils.ship(input)
    return input
 end
 
+-- ship table to GPU with CUDA or OpenCL
 function gpu_utils.ship_table(tbl)
    local out = {}
    for key, value in pairs(tbl) do
       out[key] = gpu_utils.ship(value)
+   end
+   return out
+end
+
+-- bring back table from GPU to RAM
+function gpu_utils.to_ram_table(tbl)
+   local out = {}
+   for key, value in pairs(tbl) do
+      out[key] = value:float()
    end
    return out
 end

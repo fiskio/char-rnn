@@ -97,6 +97,9 @@ print(opt)
 -- seed
 torch.manualSeed(opt.seed)
 
+-- use FloatTensor when on CPU
+torch.setdefaulttensortype('torch.FloatTensor')
+
 -- check parameters
 opt.emb_sharing = (opt.emb_sharing == 1) and true or false
 opt.bias_init = (opt.bias_init == 1) and true or false
@@ -199,7 +202,7 @@ if opt.bias_init then
    end)
 end
 
--- ship the model to the GPU if desired
+-- ship the model to the GPU?
 protos = gpu_utils.ship_table(protos)
 
 -- share embeddings?
@@ -387,7 +390,7 @@ for batch_idx=curr_batch_idx, iterations do
          local savefile = paths.concat(opt.logs_dir, string.format('model_%s.t7', exp_time))
          print('Saving checkpoint to ' .. savefile)
          local checkpoint = {}
-         checkpoint.protos = protos
+         checkpoint.protos = gpu_utils.to_ram_table(protos)
          checkpoint.opt = opt
          checkpoint.train_ppl_lst = train_ppl_lst
          checkpoint.val_ppl = val_ppl

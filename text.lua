@@ -260,15 +260,16 @@ function Text:shuffle(list)
    return list
 end
 
--- restart batch counter
-function Text:reset_batch_pointer(batch_set)
+-- (re)set batch counter
+function Text:reset_batch_pointer(batch_set, batch_idx)
+   batch_idx = batch_idx or 1
    if batch_set then
-      self._batch_index[batch_set] = 1
+      self._batch_index[batch_set] = batch_idx
    else
       self._batch_index = {}
-      self._batch_index[self._train_batches] = 1
-      self._batch_index[self._valid_batches] = 1
-      self._batch_index[self._test_batches] =  1
+      self._batch_index[self._train_batches] = batch_idx
+      self._batch_index[self._valid_batches] = batch_idx
+      self._batch_index[self._test_batches] =  batch_idx
    end
 end
 
@@ -348,7 +349,7 @@ function Text:load_cache()
    -- helper
    local function check_param(param)
       if cached[param] ~= self[param] then
-         print(string.format('Cache parameter mismatch! [ %s ] cache: %s, self: %s', param, cached[param], self[param]))
+         print(string.format('Cache parameter mismatch! [ %s ] cache: %s, new: %s', param, cached[param], self[param]))
          print(string.format('Try removing file %s', path))
          os.exit()
       end
