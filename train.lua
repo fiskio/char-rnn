@@ -178,13 +178,9 @@ init_state = {}
 for L=1,opt.num_layers do
    if opt.model == 'scrnn' then
       local s_init = torch.zeros(opt.batch_size, opt.context_size)
-      if opt.gpuid >=0 and opt.opencl == 0 then s_init = s_init:cuda() end
-      if opt.gpuid >=0 and opt.opencl == 1 then s_init = s_init:cl() end
       table.insert(init_state, s_init:clone())
    end
    local h_init = torch.zeros(opt.batch_size, opt.hidden_size)
-   if opt.gpuid >=0 and opt.opencl == 0 then h_init = h_init:cuda() end
-   if opt.gpuid >=0 and opt.opencl == 1 then h_init = h_init:cl() end
    table.insert(init_state, h_init:clone())
    if opt.model == 'lstm' then
       table.insert(init_state, h_init:clone())
@@ -202,12 +198,7 @@ if opt.bias_init then
 end
 
 -- ship the model to the GPU if desired
-if opt.gpuid >= 0 and opt.opencl == 0 then
-   for k,v in pairs(protos) do v:cuda() end
-end
-if opt.gpuid >= 0 and opt.opencl == 1 then
-   for k,v in pairs(protos) do v:cl() end
-end
+protos = gpu_utils.ship(opt, protos)
 
 -- share embeddings?
 if opt.emb_sharing then
@@ -259,17 +250,11 @@ function run_validation()
       for i,t in ipairs(init_state) do
          init_state_local[i] = torch.zeros(x:size(1), t:size(2))
       end
-      if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
-         -- have to convert to float because integers can't be cuda()
-         x = x:cuda()
-         y = y:cuda()
-         for i,s in ipairs(init_state_local) do init_state_local[i] = s:cuda() end
-      end
-      if opt.gpuid >= 0 and opt.opencl == 1 then -- ship the input arrays to GPU
-         x = x:cl()
-         y = y:cl()
-         for i,s in ipairs(init_state_local) do init_state_local[i] = s:cl() end
-      end
+      -- ship to gpu?
+      x = gpu_utils.ship(opt, x)
+      y = gpu_utils.ship(opt, y)
+      init_state_local = gpu_utils.ship(opt, init_state_local)
+
       local rnn_state = {[0] = init_state_local}
       -- forward pass
       local curr_loss = 0
@@ -303,18 +288,12 @@ function feval(x)
    for i,t in ipairs(init_state) do
       init_state_local[i] = torch.zeros(x:size(1), t:size(2))
    end
+
    -- gpu?
-   if opt.gpuid >= 0 and opt.opencl == 0 then -- ship the input arrays to GPU
-      -- have to convert to float because integers can't be cuda()'d
-      x = x:cuda()
-      y = y:cuda()
-      for i,s in ipairs(init_state_local) do init_state_local[i] = s:cuda() end
-   end
-   if opt.gpuid >= 0 and opt.opencl == 1 then -- ship the input arrays to GPU
-      x = x:cl()
-      y = y:cl()
-      for i,s in ipairs(init_state_local) do init_state_local[i] = s:cuda() end
-   end
+   x = gpu_utils.ship(x)
+   y = gpu_utils.ship(y)
+   init_state_local = gpu_utils.ship(init_state_local)
+
    ------------------- forward pass -------------------
    local tape = autobw.Tape()
    tape:begin()

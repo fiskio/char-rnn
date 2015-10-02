@@ -38,4 +38,18 @@ function gpu_utils.init(opt)
    end
 end
 
+function gpu_utils.ship(opt, tensor_arr)
+   if type(tensor_arr) ~= 'table' then tensor_arr = { tensor_arr } end
+   local out = {}
+   for _,tensor in ipairs(tensor_arr) do
+      if opt.gpuid >= 0 and opt.opencl == 0 then -- CUDA
+         table.insert(out, tensor:cuda())
+      end
+      if opt.gpuid >= 0 and opt.opencl == 1 then -- OpenCL
+         table.insert(out, tensor:cl())
+      end
+   end
+   return out
+end
+
 return gpu_utils
