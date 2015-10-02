@@ -437,7 +437,7 @@ for i = 1, iterations do
    end
    -- print train stats?
    if i % opt.print_every == 0 then
-      print(string.format("%d/%d (epoch %.3f), perplexity = %6.2f, grad/param norm = %6.4e, tokens/sec = %.f", i, iterations, epoch, train_ppl, grad_params:norm() / params:norm(), avg_ts))
+      print(string.format("%d/%d (epoch %.3f), perplexity: %7.2f, grad/param: %5.4e, tokens/sec: %.f", i, iterations, epoch, train_ppl, grad_params:norm()/params:norm(), avg_ts))
       -- plot?
       train_logger:add{train_ppl}
       if opt.plot then train_logger:plot() end
