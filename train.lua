@@ -198,7 +198,8 @@ if opt.bias_init then
 end
 
 -- ship the model to the GPU if desired
-protos = gpu_utils.ship(opt, protos)
+protos.rnn = gpu_utils.ship(opt, protos.rnn)
+if opt.hsm ~= 0 then protos.criterion = gpu_utils.ship(opt, protos.criterion) end
 
 -- share embeddings?
 if opt.emb_sharing then
@@ -221,10 +222,10 @@ print('Total number of parameters in the model: ' .. params:nElement())
 -- initialisation
 if do_random_init then
    print('Initialising network weights')
-   -- params:uniform(-0.08, 0.08) -- small numbers uniform
-   initialiser.initialise_network(protos.rnn, opt.model=='irnn')
+   params:uniform(-0.08, 0.08) -- small numbers uniform
+   --initialiser.initialise_network(protos.rnn, opt.model=='irnn')
    if opt.hsm ~= 0 then
-      initialiser.initialise_network(protos.criterion, opt.model=='irnn')
+      --initialiser.initialise_network(protos.criterion, opt.model=='irnn')
    end
 end
 
