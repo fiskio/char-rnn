@@ -127,6 +127,7 @@ local loader = Text{
 }
 local vocab_size = loader._vocab_size  -- the number of distinct characters
 local vocab = loader._word2class
+if opt.hsm ~= 0 then loader:setupHSM(opt.hsm) end
 --TODO print a 'text summary'
 
 -- define the model: prototypes for one timestep, then clone them in time
@@ -190,6 +191,16 @@ for L=1,opt.num_layers do
    end
 end
 
+-- softmax bias init?
+if opt.bias_init then
+   protos.rnn:apply(function(layer)
+      if layer.name ~= nil and layer.name == 'lsm' then
+         print('Initialising softmax bias to unigram distribution')
+         layer.decoder.data.module.bias = loader:unig_probs()
+      end
+   end)
+end
+
 -- ship the model to the GPU if desired
 if opt.gpuid >= 0 and opt.opencl == 0 then
    for k,v in pairs(protos) do v:cuda() end
@@ -204,16 +215,6 @@ if opt.emb_sharing then
       if layer.name ~= nil and layer.name == 'lsm' then
          print('Sharing encoding/decoding matrix')
          layer.encoder.data.module:share(layer.decoder.data.module, 'weight', 'gradWeight')
-      end
-   end)
-end
-
--- softmax bias init?
-if opt.bias_init then
-   protos.rnn:apply(function(layer)
-      if layer.name ~= nil and layer.name == 'lsm' then
-         print('Initialising softmax bias to unigram distribution')
-         layer.decoder.data.module.bias = loader:unig_probs()
       end
    end)
 end
