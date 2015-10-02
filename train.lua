@@ -173,17 +173,16 @@ else
    end
 end
 
--- the initial state of the cell/hidden states
-init_state = {}
-for L=1,opt.num_layers do
+-- setup initial state sizes
+init_state_sizes = {}
+for i=1,opt.num_layers do
    if opt.model == 'scrnn' then
-      local s_init = torch.zeros(opt.batch_size, opt.context_size)
-      table.insert(init_state, s_init:clone())
+      table.insert(init_state_sizes, opt.context_size)
    end
    local h_init = torch.zeros(opt.batch_size, opt.hidden_size)
-   table.insert(init_state, h_init:clone())
+   table.insert(init_state_sizes, opt.hidden_size)
    if opt.model == 'lstm' then
-      table.insert(init_state, h_init:clone())
+      table.insert(init_state_sizes, opt.hidden_size)
    end
 end
 
@@ -243,12 +242,14 @@ function run_validation()
    local loss = 0
    xlua.progress(1,n)
    -- iterate over batches in the split
-   for i = 1,n do
+   for i=1,n do
       -- fetch a batch
       local x, y = loader:next_batch(loader:valid_batches())
+      local curr_batch_size = x:size(1)
+      local curr_seq_length = x:size(2)
       local init_state_local = {}
-      for i,t in ipairs(init_state) do
-         init_state_local[i] = torch.zeros(x:size(1), t:size(2))
+      for _, init_size in ipairs(init_state_sizes) do
+         table.insert(init_state_local, torch.zeros(curr_batch_size, init_size))
       end
       -- ship to gpu?
       x = gpu_utils.ship(x)
@@ -258,15 +259,15 @@ function run_validation()
       local rnn_state = {[0] = init_state_local}
       -- forward pass
       local curr_loss = 0
-      for t=1, x:size(2) do
+      for t=1, curr_seq_length do
          clones.rnn[t]:evaluate() -- for dropout proper functioning
          local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
          rnn_state[t] = {}
-         for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end
+         for i=1,#init_state_sizes do table.insert(rnn_state[t], lst[i]) end
          curr_loss = curr_loss + clones.criterion[t]:forward(lst[#lst], y[{{}, t}])
       end
       -- carry over lstm state
-      loss = loss + curr_loss / x:size(2)
+      loss = loss + curr_loss / curr_seq_length
       xlua.progress(i, n)
       collectgarbage()
    end
@@ -284,9 +285,11 @@ function feval(x)
    grad_params:zero()
    ------------------ get minibatch -------------------
    local x, y = loader:next_batch(loader._train_batches)
+   local curr_batch_size = x:size(1)
+   local curr_seq_length = x:size(2)
    local init_state_local = {}
-   for i,t in ipairs(init_state) do
-      init_state_local[i] = torch.zeros(x:size(1), t:size(2))
+   for _, init_size in ipairs(init_state_sizes) do
+      table.insert(init_state_local, torch.zeros(curr_batch_size, init_size))
    end
 
    -- gpu?
@@ -301,14 +304,14 @@ function feval(x)
    local predictions = {}
    local loss = 0
    local ts_timer = torch.Timer()
-   for t=1,x:size(2) do
+   for t=1,curr_seq_length do
       clones.rnn[t]:training() -- make sure we are in correct mode (this is cheap, sets flag)
       local lst = clones.rnn[t]:forward{x[{{}, t}], unpack(rnn_state[t-1])}
       rnn_state[t] = {}
-      for i=1,#init_state do table.insert(rnn_state[t], lst[i]) end -- extract the state, without output
+      for i=1,#init_state_sizes do table.insert(rnn_state[t], lst[i]) end -- extract the state, without output
       loss = loss + clones.criterion[t]:forward(lst[#lst], y[{{}, t}])
    end
-   loss = loss / x:size(2)
+   loss = loss / curr_seq_length
    tape:stop()
    ------------------ backward pass -------------------
    tape:backward()
@@ -362,7 +365,7 @@ local loss0 = nil
 local best_ppl = nil
 local total_valids = 0
 -- TRAIN loop
-for i = 1, iterations do
+for i=1, iterations do
    local timer = torch.Timer()
    local epoch = i / #loader:train_batches()
    local _, loss = optim_algo(feval, params, optim_state)
