@@ -36,7 +36,6 @@ function Text:__init(config)
       {arg='max_length',  type='number', default=100,              help='maximum number of tokens in a line'},
       {arg='max_reps',    type='number', default=math.huge,        help='maximum repeated tokens in a line'},
       {arg='batch_size',  type='number', default=1,                help='maximum batch size'},
-      {arg='hsm_classes', type='number', default=-1,               help='HSM, 0 is off, -1 is sqrt(vocab)'},
       -- special tokens
       {arg='oov',         type='string', default='_OOV_',          help='out-of-vobabulary token'},
       {arg='start',       type='string', default='_START_',        help='sentence start token'},
@@ -69,7 +68,6 @@ function Text:__init(config)
    if not self:load_cache() then
       -- load all input files
       self:load_vocab()
-      self:setupHSM()
       --self._train_set = self:load_text(self._train_file)
       --self._valid_set = self:load_text(self._valid_file)
       --self._test_set  = self:load_text(self._test_file)
@@ -338,13 +336,13 @@ end
 -- save a copy
 function Text:save()
    collectgarbage()
-   local path = paths.concat(self._data_path, self._name, self._name..'.t7')
+   local path = paths.concat(self._data_path, self._name, 'cached.t7')
    torch.save(path, self)
 end
 
 -- attempt loading from cache
 function Text:load_cache()
-   local path = paths.concat(self._data_path, self._name, self._name..'.t7')
+   local path = paths.concat(self._data_path, self._name, 'cached.t7')
    if not paths.filep(path) then return false end
    local cached = torch.load(path)
    -- helper
@@ -389,12 +387,10 @@ function Text:load_cache()
 end
 
 -- [[ HSM ]]
-function Text:setupHSM()
-   --HSMClass = require 'util.HSMClass'
-   --foo = require 'util.HLogSoftMax'
-   if self._hsm_classes ~= 0 then
+function Text:setupHSM(n_classes)
+   if n_classes ~= 0 then
       local vocab_size = #self._class2word
-      local n_classes = (self._hsm_classes == -1) and torch.round(torch.sqrt(vocab_size)) or self._hsm_classes
+      n_classes = (self._hsm_classes == -1) and torch.round(torch.sqrt(vocab_size)) or self._hsm_classes
       local mapping = torch.LongTensor(vocab_size, 2):zero()
       local n_in_each_cluster = vocab_size / n_classes
       local _, idx = torch.sort(torch.randn(vocab_size), 1, true)
