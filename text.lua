@@ -351,9 +351,9 @@ function Text:load_cache()
       if cached[param] ~= self[param] then
          print(string.format('Cache parameter mismatch! [ %s ] cache: %s, new: %s', param, cached[param], self[param]))
          print(string.format('Try removing file %s', path))
+         --os.remove(path)
          os.exit()
       end
-      return true
    end
    check_param('_train_file')
    check_param('_valid_file')
@@ -387,36 +387,61 @@ function Text:load_cache()
 end
 
 -- [[ HSM ]]
-function Text:setupHSM(n_classes)
-   if n_classes ~= 0 then
-      local vocab_size = #self._class2word
-      n_classes = (self._hsm_classes == -1) and torch.round(torch.sqrt(vocab_size)) or self._hsm_classes
-      local mapping = torch.LongTensor(vocab_size, 2):zero()
-      local n_in_each_cluster = vocab_size / n_classes
-      local _, idx = torch.sort(torch.randn(vocab_size), 1, true)
-      local n_in_cluster = {} --number of tokens in each cluster
-      local c = 1
-      for i = 1, idx:size(1) do
-         local word_idx = idx[i]
-         if n_in_cluster[c] == nil then
-            n_in_cluster[c] = 1
-         else
-            n_in_cluster[c] = n_in_cluster[c] + 1
-         end
-         mapping[word_idx][1] = c
-         mapping[word_idx][2] = n_in_cluster[c]
-         if n_in_cluster[c] >= n_in_each_cluster then
-            c = c+1
-         end
-         if c > n_classes then --take care of some corner cases
-            c = n_classes
-         end
+function Text:setupHSM_rand(n_classes)
+   assert(n_classes ~= 0)
+   local vocab_size = #self._class2word
+   n_classes = (n_classes == -1) and torch.round(torch.sqrt(vocab_size)) or n_classes
+   local mapping = torch.LongTensor(vocab_size, 2):zero()
+   local n_in_each_cluster = vocab_size / n_classes
+   local _, idx = torch.sort(torch.randn(vocab_size), 1, true)
+   local n_in_cluster = {} --number of tokens in each cluster
+   local c = 1
+   for i = 1, idx:size(1) do
+      local word_idx = idx[i]
+      if n_in_cluster[c] == nil then
+         n_in_cluster[c] = 1
+      else
+         n_in_cluster[c] = n_in_cluster[c] + 1
       end
-      print(string.format('using hierarchical softmax with %d classes', n_classes))
-      -- print(mapping)
-      self._hsm_mapping = mapping
+      mapping[word_idx][1] = c
+      mapping[word_idx][2] = n_in_cluster[c]
+      if n_in_cluster[c] > n_in_each_cluster then
+         c = c+1
+      end
+      if c > n_classes then --take care of some corner cases
+         c = n_classes
+      end
    end
+   print(string.format('using hierarchical softmax with %d classes', n_classes))
+   -- print(mapping)
+   self._hsm_mapping = mapping
 end
+
+function Text:setupHSM_alpha(n_classes)
+   assert(n_classes ~= 0)
+   local vocab_size = #self._class2word
+   n_classes = (n_classes == -1) and torch.round(torch.sqrt(vocab_size)) or n_classes
+   local mapping = torch.LongTensor(vocab_size, 2):zero()
+   local n_in_each_cluster = math.floor(vocab_size/n_classes)
+   local n_in_curr_cluster = 1
+   local curr_cluster = 1
+   for class, word in tbx.sortv(self._class2word) do
+      -- print(word)
+      mapping[class][1] = curr_cluster
+      mapping[class][2] = n_in_curr_cluster
+      if n_in_curr_cluster >= n_in_each_cluster then
+         curr_cluster = curr_cluster + 1
+         n_in_curr_cluster = 0
+      end
+      n_in_curr_cluster = n_in_curr_cluster + 1
+   end
+   print(string.format('using hierarchical softmax with %d classes', n_classes))
+   -- print(mapping)
+   self._hsm_mapping = mapping
+   print(curr_cluster)
+end
+
+
 
 -- [[ getters ]]
 -- vocab maps

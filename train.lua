@@ -104,8 +104,9 @@ torch.setdefaulttensortype('torch.FloatTensor')
 opt.emb_sharing = (opt.emb_sharing == 1) and true or false
 opt.bias_init = (opt.bias_init == 1) and true or false
 train_new_model = opt.init_from == ''
-if opt.hsm ~= 0 and opt.emb_sharing then
-   error('Sharing encoder/decoder matrices and HSM are incompatible!')
+if opt.hsm ~= 0 then
+   opt.bias_init = false
+   if opt.emb_sharing then opt.hsm = opt.emb_size end
 end
 
 -- GPU?
@@ -133,7 +134,7 @@ local text = Text{
 }
 local vocab_size = text:vocab_size()
 local word2class = text:word2class()
-if opt.hsm ~= 0 then text:setupHSM(opt.hsm) end
+if opt.hsm ~= 0 then text:setupHSM_alpha(opt.hsm) end
 print(text)
 --TODO print a 'text summary'
 
@@ -186,7 +187,6 @@ for i=1,opt.num_layers do
    if opt.model == 'scrnn' then
       table.insert(init_state_sizes, opt.context_size)
    end
-   local h_init = torch.zeros(opt.batch_size, opt.rnn_size)
    table.insert(init_state_sizes, opt.rnn_size)
    if opt.model == 'lstm' then
       table.insert(init_state_sizes, opt.rnn_size)
@@ -208,12 +208,7 @@ protos = gpu_utils.ship_table(protos)
 
 -- share embeddings?
 if opt.emb_sharing then
-   protos.rnn:apply(function(layer)
-      if layer.name ~= nil and layer.name == 'lsm' then
-         print('Sharing encoding/decoding matrix')
-         layer.encoder.data.module:share(layer.decoder.data.module, 'weight', 'gradWeight')
-      end
-   end)
+   model_utils.share_embeddings(protos)
 end
 
 -- put everything into one flattened parameters tensor

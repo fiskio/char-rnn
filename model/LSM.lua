@@ -13,16 +13,16 @@ function LSM.lsm(input_size, rnn_size, emb_size, dropout, hsm, encoder)
    else
       top_h = nn.Identity()(top_h)
    end
+   local proj = nn.Linear(rnn_size, emb_size)(top_h)
    -- HSM?
    if hsm == 0 then
       -- no hsm
-      local proj = nn.Linear(rnn_size, emb_size)(top_h)
       decoder = nn.Linear(emb_size, input_size)(proj)
       local logsoft = nn.LogSoftMax()(decoder)
       table.insert(outputs, logsoft)
    else
       -- hsm
-      table.insert(outputs, top_h)
+      table.insert(outputs, proj)
    end
 
    local out = nn.gModule(inputs, outputs)

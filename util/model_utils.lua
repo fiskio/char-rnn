@@ -159,4 +159,38 @@ function model_utils.clone_many_times(net, T)
     return clones
 end
 
+function model_utils.share_embeddings(protos)
+   local encoder, decoder
+   protos.rnn:apply(function(layer)
+      if layer.name ~= nil and layer.name == 'lsm' then
+         encoder = layer.encoder
+         decoder = layer.decoder
+      end
+   end)
+   if decoder then
+      -- regular
+      encoder.data.module:share(decoder.data.module, 'weight', 'gradWeight')
+   else
+      -- hsm
+      decoder = protos.criterion.class_weight()
+      enc_w = encoder.data.module.weight
+      dec_w = decoder.data.module.weight
+      print('Encoder', enc_w:size())
+      print('Decoder', dec_w:size())
+      if (enc_w:size(1) ~= dec_w:size(2) or
+          enc_w:size(2) ~= dec_w:size(1)) then
+         print('Sharing the embedding weights is impossible, wrong sizes!')
+         print('Encoder', enc_w:size())
+         print('Decoder', dec_w:size())
+         local div = math.floor(opt.vocab_size/opt.hsm)
+         print(string.format('Try vocab_size of %d or %d', div*opt.hsm-5, (div+1)*opt.hsm-5))
+         os.exit()
+      end
+      -- share tranposed matrices
+      encoder.data.module.weight = decoder.data.module.weight:t()
+      encoder.data.module.gradWeight = decoder.data.module.gradWeight:t()
+   end
+   print('Shared encoding/decoding matrix')
+end
+
 return model_utils

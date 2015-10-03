@@ -41,17 +41,15 @@ function M.initialise_biases(module)
 end
 
 function M.initialise_network(model, relu)
-   --for k,v in pairs(model) do print(k) end
-   local visited = {}
-   for _,node in ipairs(model.fg.nodes) do
-      local module = node.data.module
-      if module and module.weight then
-         M.initialise_weights(module, relu)
+   -- hsm is different
+   if not model.fg then hsm = true end
+   model = model.fg and model or model.class_model
+   model:apply(function(x)
+      if x.weight then
+         if hsm then print('WW',  x.weight:size()) end
+         M.initialise_weights(x, relu)
       end
-      if module and module.bias then
-         M.initialise_biases(module)
-      end
-   end
+ end)
 end
 
 return M
