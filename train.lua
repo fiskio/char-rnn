@@ -123,7 +123,7 @@ end
 
 -- create the Text loader class
 print('Load text dataset...')
-local loader = Text{
+local text = Text{
    name = opt.ds_name,
    data_path = opt.data_dir,
    vocab_size = opt.vocab_size,
@@ -131,9 +131,10 @@ local loader = Text{
    max_length = opt.seq_length,
    max_reps = opt.max_reps
 }
-local vocab_size = loader:vocab_size()
-local word2class = loader:word2class()
-if opt.hsm ~= 0 then loader:setupHSM(opt.hsm) end
+local vocab_size = text:vocab_size()
+local word2class = text:word2class()
+if opt.hsm ~= 0 then text:setupHSM(opt.hsm) end
+print(text)
 --TODO print a 'text summary'
 
 curr_batch_idx = 1
@@ -158,7 +159,7 @@ if train_new_model then
    end
    -- HSM?
    if opt.hsm ~= 0 then
-      protos.criterion = nn.HLogSoftMax(loader:hsm_mapping(), opt.rnn_size)
+      protos.criterion = nn.HLogSoftMax(text:hsm_mapping(), opt.emb_size)
    else
       protos.criterion = nn.ClassNLLCriterion()
    end
@@ -197,7 +198,7 @@ if opt.bias_init then
    protos.rnn:apply(function(layer)
       if layer.name ~= nil and layer.name == 'lsm' then
          print('Initialising softmax bias to unigram distribution')
-         layer.decoder.data.module.bias = loader:unig_probs()
+         layer.decoder.data.module.bias = text:unig_probs()
       end
    end)
 end
@@ -243,14 +244,15 @@ end
 
 -- evaluate the loss over on validation set
 function run_validation()
-   local n = #loader:valid_batches()
-   loader:reset_batch_pointer(loader:valid_batches()) -- reset validation batch pointer
+   -- setup
+   local tot_batches = #text:valid_batches()
+   text:reset_batch_pointer(text:valid_batches())
    local loss = 0
-   xlua.progress(1,n)
-   -- iterate over batches in the split
-   for i=1,n do
+   xlua.progress(1,tot_batches)
+   -- iterate over all valid batches
+   for i=1,tot_batches do
       -- fetch a batch
-      local inputs, targets = loader:next_batch(loader:valid_batches())
+      local inputs, targets = text:next_batch(text:valid_batches())
       local curr_batch_size = inputs:size(1)
       local curr_seq_length = inputs:size(2)
       local init_state_local = {}
@@ -261,9 +263,8 @@ function run_validation()
       inputs = gpu_utils.ship(inputs)
       targets = gpu_utils.ship(targets)
       init_state_local = gpu_utils.ship_table(init_state_local)
-
-      local rnn_state = {[0] = init_state_local}
       -- forward pass
+      local rnn_state = {[0] = init_state_local}
       local curr_loss = 0
       for t=1, curr_seq_length do
          clones.rnn[t]:evaluate() -- for dropout proper functioning
@@ -272,14 +273,14 @@ function run_validation()
          for i=1,#init_state_sizes do table.insert(rnn_state[t], lst[i]) end
          curr_loss = curr_loss + clones.criterion[t]:forward(lst[#lst], targets[{{}, t}])
       end
-      -- carry over lstm state
+      -- update valid loss
       loss = loss + curr_loss / curr_seq_length
-      xlua.progress(i, n)
+      xlua.progress(i, tot_batches)
       collectgarbage()
    end
-
-   xlua.progress(n, n)
-   loss = loss / n
+   -- wrap up
+   xlua.progress(tot_batches, tot_batches)
+   loss = loss / tot_batches
    return loss
 end
 
@@ -290,19 +291,17 @@ function feval(x)
    end
    grad_params:zero()
    ------------------ get minibatch -------------------
-   local inputs, targets = loader:next_batch(loader:train_batches())
+   local inputs, targets = text:next_batch(text:train_batches())
    local curr_batch_size = inputs:size(1)
    local curr_seq_length = inputs:size(2)
    local init_state_local = {}
    for _, init_size in ipairs(init_state_sizes) do
       table.insert(init_state_local, torch.zeros(curr_batch_size, init_size))
    end
-
-   -- gpu?
+   -- ship to gpu?
    inputs = gpu_utils.ship(inputs)
    targets = gpu_utils.ship(targets)
    init_state_local = gpu_utils.ship_table(init_state_local)
-
    ------------------- forward pass -------------------
    local tape = autobw.Tape()
    tape:begin()
@@ -361,24 +360,25 @@ print('Optimisation:')
 print(opt.optim, optim_state)
 
 print('Starting training!')
-local iterations = opt.max_epochs * #loader:train_batches()
+local iterations = opt.max_epochs * #text:train_batches()
 local loss0 = nil
 local best_ppl = nil
 local total_valids = 0
-loader:reset_batch_pointer(loader:train_batches(), curr_batch_idx) -- (re)set train batch pointer
+text:reset_batch_pointer(text:train_batches(), curr_batch_idx) -- (re)set train batch pointer
 -- TRAIN loop
 for batch_idx=curr_batch_idx, iterations do
+   -- setup
    local timer = torch.Timer()
-   local epoch = batch_idx / #loader:train_batches()
+   local epoch = batch_idx / #text:train_batches()
    local _, loss = optim_algo(feval, params, optim_state)
    local time = timer:time().real
-   -- save ppls
+   -- save train ppl
    train_ppl = math.exp(loss[1]) -- the loss is inside a list, pop it
-   train_ppl_lst[batch_idx] = train_ppl
+   table.insert(train_ppl_lst, train_ppl)
    -- every now and then or on last iteration
    if batch_idx % opt.valid_period == 0 or batch_idx == iterations then
-      -- evaluate loss on validation data
-      local val_ppl = math.exp(run_validation(loader:valid_batches()))
+      -- validation
+      local val_ppl = math.exp(run_validation(text:valid_batches()))
       val_ppl_lst[batch_idx] = val_ppl
       print('Evaluation PPL: '..val_ppl)
       -- plot?
@@ -397,7 +397,7 @@ for batch_idx=curr_batch_idx, iterations do
          checkpoint.val_ppl_lst = val_ppl_lst
          checkpoint.batch_idx = batch_idx
          checkpoint.epoch = epoch
-         checkpoint.word2class = loader:word2class()
+         checkpoint.word2class = text:word2class()
          torch.save(savefile, checkpoint)
          -- upload to S3?
          if opt.s3_output ~= '' then
