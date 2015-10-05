@@ -187,8 +187,11 @@ function model_utils.share_embeddings(protos)
          os.exit()
       end
       -- share tranposed matrices
-      encoder.data.module.weight = decoder.data.module.weight:t()
-      encoder.data.module.gradWeight = decoder.data.module.gradWeight:t()
+      n_row = decoder.data.module.weight:size(1)
+      n_col = decoder.data.module.weight:size(2)
+
+      encoder.data.module.weight = nn.View(n_col, n_row):forward(decoder.data.module.weight)
+      encoder.data.module.gradWeight = nn.View(n_col, n_row):forward(decoder.data.module.gradWeight)
    end
    print('Shared encoding/decoding matrix')
 end
