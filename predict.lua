@@ -20,6 +20,7 @@ require 'util.misc'
 model_utils = require 'util.model_utils'
 gpu_utils = require 'util.gpu_utils'
 initialiser = require 'util.initialiser'
+emoji = require 'util.emoji'
 
 cmd = torch.CmdLine()
 cmd:text()
@@ -31,6 +32,7 @@ cmd:argument('-model','model checkpoint to use for sampling')
 -- optional parameters
 cmd:option('-seed',123,'random number generator\'s seed')
 cmd:option('-npredictions',10,'number of terms to predict')
+cmd:option('-only_emoji',1,'predict only emoji 0 = allow words')
 cmd:option('-result_separator','\t','separator to use in output between each result')
 cmd:option('-print_probs',false,'print probabilities with each result')
 cmd:option('-gpuid',-1,'which gpu to use. -1 = use CPU')
@@ -165,7 +167,13 @@ function processInput(word2class, class2word)
             local npredictions = 0
             for i = 1,ids:size(1) do
                 if npredictions == opt.npredictions then break end
-                if ids[i] > 5 then
+                local accepted = false
+                if 0 ~= opt.only_emoji then
+                    accepted = emoji.isEmoji(class2word[ids[i]])
+                else
+                    accepted = ids[i] > 5
+                end
+                if accepted then
                     io.write(class2word[ids[i]])
                     if opt.print_probs then
                         io.write(' '..probs[i])
