@@ -244,7 +244,7 @@ clones = {}
 if opt.model == 'cbow' then
    print('Cloning fixed-context model but just the once')
    for name, proto in pairs(protos) do
-      clones[name] = model_utils.clone_many_times(proto, 1, not proto.parameters)
+      clones[name] = model_utils.clone_many_times(proto, 1, not proto.parameters)[1]
    end
 else
    for name, proto in pairs(protos) do
@@ -298,7 +298,6 @@ end
 
 -- for fixed-context, feed-fwd NNs
 function run_validation_fixed()
-   local clone = clones[1]
    -- setup
    local tot_batches = #text:valid_batches()
    txt_sampler:reset_batch_pointer(text, text:valid_batches())
@@ -314,10 +313,10 @@ function run_validation_fixed()
       inputs = gpu_utils.ship(inputs)
       targets = gpu_utils.ship(targets)
       -- forward pass
-      clone.rnn:evaluate() -- for dropout proper functioning
-      local preds = clone.rnn:forward(inputs)
+      clones.rnn:evaluate() -- for dropout proper functioning
+      local preds = clones.rnn:forward(inputs)
       -- update valid loss
-      loss = loss + clone.criterion:forward(preds, targets)
+      loss = loss + clones.criterion:forward(preds, targets)
       xlua.progress(i, tot_batches)
       collectgarbage()
    end
@@ -394,14 +393,13 @@ function feval_fixed(x)
    inputs = gpu_utils.ship(inputs)
    targets = gpu_utils.ship(targets)
    ------------------- forward pass -------------------
-   local clone = clones[1]
    local tape = autobw.Tape()
    tape:begin()
    local loss = 0
    local ts_timer = torch.Timer()
-   clone.rnn:training() -- make sure we are in correct mode (this is cheap, sets flag)
-   local preds = clone.rnn:forward(inputs)
-   loss = loss + clone.criterion:forward(preds, targets)
+   clones.rnn:training() -- make sure we are in correct mode (this is cheap, sets flag)
+   local preds = clones.rnn:forward(inputs)
+   loss = loss + clones.criterion:forward(preds, targets)
    tape:stop()
    ------------------ backward pass -------------------
    tape:backward()
