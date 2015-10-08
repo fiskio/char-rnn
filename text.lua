@@ -279,13 +279,7 @@ function Text:next_batch(batch_list)
    self._batch_index[batch_list] = self._batch_index[batch_list] + 1
    if self._batch_index[batch_list] > #batch_list then
       self._batch_index[batch_list] = 1 end
-   local x = batch_list[self._batch_index[batch_list]]
-   local y = torch.Tensor():typeAs(x):resizeAs(x)
-   -- shifted copy
-   y:sub(1,-1,1,-2):copy(x:sub(1,-1,2,-1))
-   -- end of sentence
-   y[{{},-1}] = self:end_id()
-   return x, y
+   return batch_list[self._batch_index[batch_list]]
 end
 
 -- check for excessive repetition

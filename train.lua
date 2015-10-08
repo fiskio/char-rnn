@@ -20,6 +20,7 @@ GRU = require 'model.GRU'
 RNN = require 'model.RNN'
 IRNN = require 'model.IRNN'
 SCRNN = require 'model.SCRNN'
+CBOW = require 'model.CBOW'
 
 cmd = torch.CmdLine()
 cmd:text()
@@ -36,9 +37,9 @@ cmd:option('-s3_input', '', 'S3 dataset base location, / terminated')
 cmd:option('-s3_output', '', 'S3 logs base location, / terminated')
 -- model params
 cmd:option('-rnn_size', 512, 'Size of recurrent internal state')
-cmd:option('-context_size', 128, 'Size of SCRNN context state')
+cmd:option('-context_size', 128, 'Size of SCRNN context state or of word context for CBOW')
 cmd:option('-num_layers', 1, 'Number of recurrent layers')
-cmd:option('-model', 'rnn', 'rnn | irnn | gru | lstm | scrnn')
+cmd:option('-model', 'rnn', 'rnn | irnn | gru | lstm | scrnn | cbow')
 cmd:option('-emb_size', 160, 'Size of word embeddings')
 cmd:option('-hsm', 0, 'HSM classes, 0 is off, -1 is sqrt(vocab)')
 cmd:option('-emb_sharing', 1, 'Share the encoder/decoder matrices, 1 is on')
