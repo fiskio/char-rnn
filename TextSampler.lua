@@ -6,7 +6,7 @@ require 'math'
 require 'paths'
 
 local TextSampler, parent = torch.class("TextSampler")
-TextSampler.isText = true
+TextSampler.isTextSampler = true -- XXX ?
 
 function TextSampler:__init(config)
     assert(torch.type(config) == 'table' and not config[1], "Constructor requires key-value arguments")
@@ -50,6 +50,24 @@ function TextSampler:next_batch(text, batch_list)
         x = reshaped:sub(1,-1, 1,-2)
         y = reshaped:sub(1,-1, -1,-1)
         return x, y
+    else
+        error("What just happened? Unkown sampling mode in TextSampler.")
     end
+end
+
+TextSampler.modeSwitch = {
+    rnn = 'rnn',
+    irnn = 'rnn',
+    gru = 'rnn',
+    lstm = 'rnn',
+    scrnn = 'rnn',
+    cbow = 'ff'
+}
+TextSampler.networkToMode = function(network_type)
+    local m = TextSampler.modeSwitch[network_type]
+    if not m then
+        error('no TextSampler mode for network type \''..network_type)
+    end
+    return m
 end
 

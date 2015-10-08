@@ -12,6 +12,7 @@ tbx = require 'pl.tablex'
 HSMClass = require 'util.HSMClass'
 LSM = require 'model.LSM'
 text = require 'text'
+text_sampler = require 'TextSampler'
 model_utils = require 'util.model_utils'
 gpu_utils = require 'util.gpu_utils'
 initialiser = require 'util.initialiser'
@@ -133,6 +134,8 @@ local text = Text{
    max_length = opt.seq_length,
    max_reps = opt.max_reps
 }
+local txt_sampler = TextSampler{mode=TextSampler.networkToMode(opt.model),
+                                 context_size=opt.context_size}
 local vocab_size = text:vocab_size()
 local word2class = text:word2class()
 if opt.hsm ~= 0 then text:setupHSM_alpha(opt.hsm) end
@@ -248,7 +251,7 @@ function run_validation()
    -- iterate over all valid batches
    for i=1,tot_batches do
       -- fetch a batch
-      local inputs, targets = text:next_batch(text:valid_batches())
+      local inputs, targets = txt_sampler:next_batch(text,text:valid_batches())
       local curr_batch_size = inputs:size(1)
       local curr_seq_length = inputs:size(2)
       local init_state_local = {}
@@ -287,7 +290,7 @@ function feval(x)
    end
    grad_params:zero()
    ------------------ get minibatch -------------------
-   local inputs, targets = text:next_batch(text:train_batches())
+   local inputs, targets = txt_sampler:next_batch(text,text:train_batches())
    local curr_batch_size = inputs:size(1)
    local curr_seq_length = inputs:size(2)
    local init_state_local = {}
