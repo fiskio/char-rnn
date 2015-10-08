@@ -305,6 +305,9 @@ function run_validation_fixed()
    for i=1,tot_batches do
       -- fetch a batch
       local inputs, targets = txt_sampler:next_batch(text,text:valid_batches())
+      -- ship to gpu?
+      inputs = gpu_utils.ship(inputs)
+      targets = gpu_utils.ship(targets)
       local curr_batch_size = inputs:size(1)
       local curr_seq_length = inputs:size(2)
       -- ship to gpu?
