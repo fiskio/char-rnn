@@ -134,8 +134,12 @@ local text = Text{
    max_length = opt.seq_length,
    max_reps = opt.max_reps
 }
+-- samplr ignores other params when in rnn mode
 local txt_sampler = TextSampler{mode=TextSampler.networkToMode(opt.model),
-                                 context_size=opt.context_size}
+                                context_size=opt.context_size,
+                                max_batch_size=text._batch_size,
+                                max_length=text._max_length,
+                                start_id=text:word2class()[text:start_sym()]}
 local vocab_size = text:vocab_size()
 local word2class = text:word2class()
 if opt.hsm ~= 0 then text:setupHSM_alpha(opt.hsm) end
@@ -161,6 +165,8 @@ if train_new_model then
       protos.rnn = IRNN.rnn(vocab_size, opt.rnn_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
    elseif opt.model == 'scrnn' then
       protos.rnn = SCRNN.scrnn(vocab_size, opt.rnn_size, opt.context_size, opt.num_layers, opt.emb_size, opt.dropout, opt.hsm)
+   elseif opt.model == 'cbow' then
+       protos.rnn = CBOW.create(vocab_size, opt.context_size, vocab_size, opt.rnn_size, opt.emb_size, opt.dropout, opt.hsm)
    end
    -- HSM?
    if opt.hsm ~= 0 then
@@ -235,17 +241,22 @@ end
 
 -- make a bunch of clones after flattening, as that reallocates memory
 clones = {}
-for name, proto in pairs(protos) do
-   print(string.format('Cloning %s %s times', name, opt.seq_length+1))
-   -- seq_length + 1 because Text prepends start of sequence token
-   clones[name] = model_utils.clone_many_times(proto, opt.seq_length+1, not proto.parameters)
+if opt.model == 'cbow' then
+   print('Not cloning fixed-context model')
+   clones = protos
+else
+   for name, proto in pairs(protos) do
+      print(string.format('Cloning %s %s times', name, opt.seq_length+1))
+      -- seq_length + 1 because Text prepends start of sequence token
+      clones[name] = model_utils.clone_many_times(proto, opt.seq_length+1, not proto.parameters)
+   end
 end
 
 -- evaluate the loss over on validation set
 function run_validation()
    -- setup
    local tot_batches = #text:valid_batches()
-   text:reset_batch_pointer(text:valid_batches())
+   txt_sampler:reset_batch_pointer(text, text:valid_batches())
    local loss = 0
    xlua.progress(1,tot_batches)
    -- iterate over all valid batches
@@ -283,6 +294,36 @@ function run_validation()
    return loss
 end
 
+-- for fixed-context, feed-fwd NNs
+function run_validation_fixed()
+   -- setup
+   local tot_batches = #text:valid_batches()
+   txt_sampler:reset_batch_pointer(text, text:valid_batches())
+   local loss = 0
+   xlua.progress(1,tot_batches)
+   -- iterate over all valid batches
+   for i=1,tot_batches do
+      -- fetch a batch
+      local inputs, targets = txt_sampler:next_batch(text,text:valid_batches())
+      local curr_batch_size = inputs:size(1)
+      local curr_seq_length = inputs:size(2)
+      -- ship to gpu?
+      inputs = gpu_utils.ship(inputs)
+      targets = gpu_utils.ship(targets)
+      -- forward pass
+      clones.rnn:evaluate() -- for dropout proper functioning
+      local preds = clones.rnn:forward(inputs)
+      -- update valid loss
+      loss = loss + clones.criterion:forward(preds, targets)
+      xlua.progress(i, tot_batches)
+      collectgarbage()
+   end
+   -- wrap up
+   xlua.progress(tot_batches, tot_batches)
+   loss = loss / tot_batches
+   return loss
+end
+
 -- do fwd/bwd and return loss, grad_params
 function feval(x)
    if x ~= params then
@@ -291,6 +332,10 @@ function feval(x)
    grad_params:zero()
    ------------------ get minibatch -------------------
    local inputs, targets = txt_sampler:next_batch(text,text:train_batches())
+   print('inputs')
+   print(inputs[{{}, 1}]:size())
+   print('targets')
+   print(targets[{{}, 1}]:size())
    local curr_batch_size = inputs:size(1)
    local curr_seq_length = inputs:size(2)
    local init_state_local = {}
@@ -305,7 +350,6 @@ function feval(x)
    local tape = autobw.Tape()
    tape:begin()
    local rnn_state = {[0] = init_state_local}
-   local predictions = {}
    local loss = 0
    local ts_timer = torch.Timer()
    for t=1,curr_seq_length do
@@ -316,6 +360,44 @@ function feval(x)
       loss = loss + clones.criterion[t]:forward(lst[#lst], targets[{{}, t}])
    end
    loss = loss / curr_seq_length
+   tape:stop()
+   ------------------ backward pass -------------------
+   tape:backward()
+   ------------------------ misc ----------------------
+   -- renorm gradients
+   local gp_norm = grad_params:norm()
+   if gp_norm > opt.grad_max_norm then
+      grad_params:mul(opt.grad_max_norm / gp_norm)
+      -- print(string.format('grads renorm: %.2f -> %.2f', gp_norm, grad_params:norm()))
+   end
+   -- get average token/seconds
+   local curr_ts = inputs:nElement() / ts_timer:time().real
+   avg_ts = avg_ts and 0.99 * avg_ts + 0.01 * curr_ts or curr_ts
+   -- TODO pass on final context state to next batch in SCRNN
+   return loss, grad_params
+end
+
+-- feval for fixed-context, feed-fwd NNs
+function feval_fixed(x)
+   if x ~= params then
+      params:copy(x)
+   end
+   grad_params:zero()
+   ------------------ get minibatch -------------------
+   local inputs, targets = txt_sampler:next_batch(text,text:train_batches())
+   local curr_batch_size = inputs:size(1)
+   local curr_seq_length = inputs:size(2)
+   -- ship to gpu?
+   inputs = gpu_utils.ship(inputs)
+   targets = gpu_utils.ship(targets)
+   ------------------- forward pass -------------------
+   local tape = autobw.Tape()
+   tape:begin()
+   local loss = 0
+   local ts_timer = torch.Timer()
+   clones.rnn:training() -- make sure we are in correct mode (this is cheap, sets flag)
+   local preds = clones.rnn:forward(inputs)
+   loss = loss + clones.criterion:forward(preds, targets)
    tape:stop()
    ------------------ backward pass -------------------
    tape:backward()
@@ -363,13 +445,15 @@ local iterations = opt.max_epochs * #text:train_batches()
 local loss0 = nil
 local best_ppl = nil
 local total_valids = 0
-text:reset_batch_pointer(text:train_batches(), curr_batch_idx) -- (re)set train batch pointer
+txt_sampler:reset_batch_pointer(text, text:train_batches(), curr_batch_idx, batch_idx) -- (re)set train batch pointer
+local valid_fn = opt.model == 'cbow' and run_validation_fixed or run_validation
+local feval_fn = opt.model == 'cbow' and feval_fixed or feval
 -- TRAIN loop
 for batch_idx=curr_batch_idx, iterations do
    -- setup
    local timer = torch.Timer()
    local epoch = batch_idx / #text:train_batches()
-   local _, loss = optim_algo(feval, params, optim_state)
+   local _, loss = optim_algo(feval_fn, params, optim_state)
    local time = timer:time().real
    -- save train ppl
    train_ppl = math.exp(loss[1]) -- the loss is inside a list, pop it
@@ -377,7 +461,7 @@ for batch_idx=curr_batch_idx, iterations do
    -- every now and then or on last iteration
    if batch_idx % opt.valid_period == 0 or batch_idx == iterations then
       -- validation
-      local val_ppl = math.exp(run_validation(text:valid_batches()))
+      local val_ppl = math.exp(valid_fn(text:valid_batches()))
       val_ppl_lst[batch_idx] = val_ppl
       print('Evaluation PPL: '..val_ppl)
       -- plot?
