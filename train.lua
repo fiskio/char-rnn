@@ -242,8 +242,10 @@ end
 -- make a bunch of clones after flattening, as that reallocates memory
 clones = {}
 if opt.model == 'cbow' then
-   print('Not cloning fixed-context model')
-   clones = protos
+   print('Cloning fixed-context model but just the once')
+   for name, proto in pairs(protos) do
+      clones[name] = model_utils.clone_many_times(proto, 1, not proto.parameters)
+   end
 else
    for name, proto in pairs(protos) do
       print(string.format('Cloning %s %s times', name, opt.seq_length+1))
@@ -305,9 +307,6 @@ function run_validation_fixed()
    for i=1,tot_batches do
       -- fetch a batch
       local inputs, targets = txt_sampler:next_batch(text,text:valid_batches())
-      -- ship to gpu?
-      inputs = gpu_utils.ship(inputs)
-      targets = gpu_utils.ship(targets)
       local curr_batch_size = inputs:size(1)
       local curr_seq_length = inputs:size(2)
       -- ship to gpu?
@@ -414,7 +413,6 @@ function feval_fixed(x)
    -- get average token/seconds
    local curr_ts = inputs:nElement() / ts_timer:time().real
    avg_ts = avg_ts and 0.99 * avg_ts + 0.01 * curr_ts or curr_ts
-   -- TODO pass on final context state to next batch in SCRNN
    return loss, grad_params
 end
 
