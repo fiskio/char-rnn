@@ -106,7 +106,7 @@ TextSampler.modeSwitch = {
     gru = 'rnn',
     lstm = 'rnn',
     scrnn = 'rnn',
-    cbow = 'ff'
+    cbow = 'emoji-ff'
 }
 TextSampler.networkToMode = function(network_type)
     local m = TextSampler.modeSwitch[network_type]
