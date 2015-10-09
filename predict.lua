@@ -22,6 +22,8 @@ gpu_utils = require 'util.gpu_utils'
 initialiser = require 'util.initialiser'
 emoji = require 'util.emoji'
 
+nngraph.setDebug(true) --XXX
+
 cmd = torch.CmdLine()
 cmd:text()
 cmd:text('Predict terms from a language model')
@@ -130,7 +132,7 @@ end
 
 function forward_fixed(x)
     -- ship to gpu
-    x = gpu_utils.ship(torch.FloatTensor(x))
+    x = gpu_utils.ship(torch.FloatTensor{x})
     -- forward pass
     local prediction = protos.rnn:forward(x)
     -- lst is a list of [state1,state2,..stateN,output]. We want everything but last piece
@@ -174,6 +176,8 @@ function processInput(word2class, class2word, fwd_fn)
                 prediction:div(torch.sum(prediction))
             end
             local probs, ids = torch.sort(prediction, true)
+            probs = ids[1]
+            ids = ids[1]
             local npredictions = 0
             for i = 1,ids:size(1) do
                 if npredictions == opt.npredictions then break end
@@ -181,7 +185,9 @@ function processInput(word2class, class2word, fwd_fn)
                 if 0 ~= opt.only_emoji then
                     accepted = emoji.isEmoji(class2word[ids[i]])
                 else
-                    accepted = ids[i] > 5
+                   print('before', ids[i])
+                   accepted = ids[i] > 5
+                   print('after')
                 end
                 if accepted then
                     io.write(class2word[ids[i]])
