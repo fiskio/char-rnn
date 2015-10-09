@@ -17,7 +17,7 @@ function CBOW.create(vocab_size, context_size, output_class_size, hidden_size, e
    local sum = nn.Transpose()(nn.CAddTable()(nn.SplitTable(2)(nn.Transpose()(encoder))))
    local projection = nn.Tanh()(nn.Linear(emb_size, hidden_size)(sum))
    if dropout > 0 then projection = nn.Dropout(dropout)(projection) end
-   local logsoft = LSM.lsm(output_class_size, hidden_size, emb_size, dropout, hsm, encoder)(projection)
+   local logsoft = LSM.lsm(output_class_size, hidden_size, emb_size, 0, hsm, encoder)(projection)
    local outputs = {logsoft}
    return nn.gModule(inputs, outputs)
 end
