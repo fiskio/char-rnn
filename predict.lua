@@ -112,7 +112,7 @@ function forward(x)
     x = gpu_utils.ship(torch.FloatTensor{x})
     init_state_local = gpu_utils.ship_table(init_state_local)
 
-    local prediction = {}
+    local prediction = nil
     local rnn_state = {[0] = init_state_local}
     -- forward pass
     for t=1, curr_seq_length do
@@ -120,8 +120,20 @@ function forward(x)
         -- lst is a list of [state1,state2,..stateN,output]. We want everything but last piece
         rnn_state[t] = {}
         for i=1,#init_state_sizes do table.insert(rnn_state[t], lst[i]) end
-        prediction = lst[#lst]
+        if t == curr_seq_length then
+           prediction = lst[#lst]
+        end
     end
+    collectgarbage()
+    return prediction
+end
+
+function forward_fixed(x)
+    -- ship to gpu
+    x = gpu_utils.ship(torch.FloatTensor(x))
+    -- forward pass
+    local prediction = protos.rnn:forward(x)
+    -- lst is a list of [state1,state2,..stateN,output]. We want everything but last piece
     collectgarbage()
     return prediction
 end
@@ -144,7 +156,7 @@ function lookup_words(tokens, lookup_table, oov_vec)
     return ids
 end
 
-function processInput(word2class, class2word)
+function processInput(word2class, class2word, fwd_fn)
     local sep = opt.result_separator
     -- first input class is OOV
     local oov = class2word[1]
@@ -155,15 +167,13 @@ function processInput(word2class, class2word)
             local tokens = {opt.start_symbol}
             for _,t in ipairs(split_text) do table.insert(tokens, t) end
             local x = lookup_words(tokens, word2class, oov)
-            local prediction = forward(x)
+            local prediction = fwd_fn(x)
             if opt.print_probs then
                 prediction = torch.exp(prediction):squeeze()
                 -- renormalize so probs sum to one
                 prediction:div(torch.sum(prediction))
             end
             local probs, ids = torch.sort(prediction, true)
-            probs = probs[1]
-            ids = ids[1]
             local npredictions = 0
             for i = 1,ids:size(1) do
                 if npredictions == opt.npredictions then break end
@@ -188,5 +198,6 @@ function processInput(word2class, class2word)
     return 0
 end
 
-return processInput(word2class, class2word)
+local fwd_fn = checkpoint.opt.model ~= 'cbow' and forward or forward_fixed
+return processInput(word2class, class2word, fwd_fn)
 
