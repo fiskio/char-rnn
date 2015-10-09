@@ -11,6 +11,8 @@
 --      data/1-grams.txt
 -----------------------------------------------------------------------------------
 require 'paths'
+emoji = require 'util.emoji'
+__ = require 'underscore'
 
 local Text, parent = torch.class("Text")
 Text.isText = true
@@ -140,6 +142,37 @@ function Text:load_vocab()
    self._word2class = word2class
    self._unig_probs = torch.Tensor(counts):div(total_count)
    self._vocab_size = #class2word
+   local emoji_classes = {}
+   for w,c in pairs(word2class) do
+      if emoji.isEmoji(w) then
+         emoji_classes[c] = w
+      end
+   end
+   self._emoji_classes = emoji_classes
+end
+
+Text.find_indices = function(list, fn)
+   local indices = {}
+   for i,x in ipairs(list) do
+      if fn(x) then
+         table.insert(indices, i)
+      end
+   end
+   return indices
+end
+-- return all sub-sequences that end in emoji
+-- e.g.
+--    {t u v E w x E E z}- > {{t u v E}
+--                            {t u v E w x E}
+--                            {t u v E w x E E}}
+function Text:emoji_sub_sentences(ids)
+   local indices = Text.find_indices(ids, function(x) return nil ~= self._emoji_classes[x] end)
+   local sentences = {}
+   for _,i in ipairs(indices) do
+      local s = __.slice(ids, 1, i)
+      table.insert(sentences, s)
+   end
+   return sentences
 end
 
 -- @arg path   input text file
@@ -148,6 +181,7 @@ function Text:load_text(path)
    local skipped = 0 -- too repetitive
    local trunc = 0   -- too long
    local empty = 0   -- empty
+   local emoji_subs = 0   -- number of subsequences created that end in emoji
    local n_lines = self:get_line_count(path)
    print(string.format('Loading %s lines of text from %s...', n_lines, path))
    xlua.progress(0, n_lines)
@@ -169,18 +203,22 @@ function Text:load_text(path)
          assert(sentence[1] == self:start_id())
          assert(#sentence >= 2)
          if self:ok_repeat(sentence) then
-            -- convert it to tensor
-            local t_sentence = torch.ShortTensor(sentence):reshape(1, #sentence)
-            local batch_list = sentence_set[#sentence]
-            if batch_list then
-               local batch = batch_list[#batch_list]
-               if batch:size(1) >= self._batch_size then
-                  table.insert(batch_list, t_sentence)
+            local sub_sentences = self:emoji_sub_sentences(sentence)
+            emoji_subs = emoji_subs + #sub_sentences
+            for _,s in ipairs(sub_sentences) do
+               -- convert it to tensor
+               local t_sentence = torch.ShortTensor(s):reshape(1, #s)
+               local batch_list = sentence_set[#s]
+               if batch_list then
+                  local batch = batch_list[#batch_list]
+                  if batch:size(1) >= self._batch_size then
+                     table.insert(batch_list, t_sentence)
+                  else
+                     batch_list[#batch_list] = batch:cat(t_sentence, 1)
+                  end
                else
-                  batch_list[#batch_list] = batch:cat(t_sentence, 1)
+                  sentence_set[#s] = { t_sentence }
                end
-            else
-               sentence_set[#sentence] = { t_sentence }
             end
          else
             skipped = skipped + 1
@@ -195,6 +233,7 @@ function Text:load_text(path)
    print(string.format('Lines Empty:     %s - %.1f%%', empty, 100*empty/n_lines))
    print(string.format('Lines Skipped:   %s - %.1f%%', skipped, 100*skipped/n_lines))
    print(string.format('Lines Truncated: %s - %.1f%%', trunc, 100*trunc/n_lines))
+   print(string.format('Lines of emoji subsequences created: %s - %.1f%%', emoji_subs, 100*emoji_subs/n_lines))
    collectgarbage()
    return sentence_set
 end
