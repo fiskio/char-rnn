@@ -13,6 +13,7 @@ require 'nn'
 require 'nngraph'
 require 'optim'
 require 'lfs'
+__ = require 'underscore'
 
 require 'util.OneHot'
 require 'util.misc'
@@ -33,7 +34,7 @@ cmd:text('Options')
 cmd:argument('-model','model checkpoint to use for sampling')
 -- optional parameters
 cmd:option('-seed',123,'random number generator\'s seed')
-cmd:option('-npredictions',10,'number of terms to predict')
+cmd:option('-npredictions',20,'number of terms to predict')
 cmd:option('-only_emoji',1,'predict only emoji 0 = allow words')
 cmd:option('-result_separator','\t','separator to use in output between each result')
 cmd:option('-print_probs',false,'print probabilities with each result')
@@ -41,6 +42,7 @@ cmd:option('-gpuid',-1,'which gpu to use. -1 = use CPU')
 cmd:option('-opencl',0,'use OpenCL (instead of CUDA)')
 cmd:option('-verbose',0,'set to 0 to ONLY print the predicted text, no diagnostics')
 cmd:option('-start_symbol','_START_','start symbol for vocab (should really be in the model')
+cmd:option('-lmchallenge',false,'enable LMChallenge mode')
 cmd:text()
 
 -- parse input params
@@ -164,6 +166,7 @@ function processInput(word2class, class2word, fwd_fn)
     local oov = class2word[1]
     for line in io.lines() do
         local split_text = line:split('%s+')
+        if opt.lmchallenge then split_text = __.slice(split_text, 1, #split_text) end
         if #split_text > 0 then
             -- returns table of embedding Tensors
             local tokens = {opt.start_symbol}
@@ -199,6 +202,7 @@ function processInput(word2class, class2word, fwd_fn)
                 end
             end
             io.write('\n')
+            io.flush()
         end
     end
     return 0

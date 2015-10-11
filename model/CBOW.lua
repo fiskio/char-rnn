@@ -11,14 +11,16 @@ function CBOW.create(vocab_size, context_size, output_class_size, hidden_size, e
 end
 --]]
 function CBOW.create(vocab_size, context_size, output_class_size, hidden_size, emb_size, dropout, hsm)
-   -- there are n+1 inputs (hiddens on each layer and x)
+-- there are n+1 inputs (hiddens on each layer and x)
    local inputs = {nn.Identity()()}
    local encoder = nn.LookupTable(vocab_size, emb_size)(inputs[1]):annotate{label='Embedding lookup'}
    local sum = nn.CAddTable()(nn.SplitTable(2)(encoder))
-   local projection = nn.Tanh()(nn.Linear(emb_size, hidden_size)(sum))
-   if dropout > 0 then projection = nn.Dropout(dropout)(projection) end
-   local logsoft = LSM.lsm(output_class_size, hidden_size, emb_size, 0, hsm, encoder)(projection)
-   local outputs = {logsoft}
+   local hidden = nn.ReLU()(nn.Linear(emb_size, emb_size)(sum))
+   --local logsoft = LSM.lsm(output_class_size, hidden_size, emb_size, 0, hsm, encoder)(sum)
+   local decoder = nn.Linear(emb_size, output_class_size)(hidden)
+   --if dropout > 0 then decoder = nn.Dropout(dropout)(decoder) end
+   local nnlogsoft = nn.LogSoftMax()(decoder)
+   local outputs = {nnlogsoft}
    return nn.gModule(inputs, outputs)
 end
 return CBOW
